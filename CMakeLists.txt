@@ -26,6 +26,7 @@ find_program(LLVM_RANLIB_EXECUTABLE llvm-ranlib REQUIRED)
 find_program(LLVM_NM_EXECUTABLE llvm-nm REQUIRED)
 find_program(LLVM_OBJDUMP_EXECUTABLE llvm-objdump REQUIRED)
 find_program(MAKE_EXECUTABLE make REQUIRED)
+find_program(RAKE_EXECUTABLE rake REQUIRED)  # PicoRuby and mruby build with rake
 
 # NOTE:
 # "cmake --build --parallel" does not reach the make/rake invocations inside an
@@ -129,8 +130,18 @@ ExternalProject_Add(cruby
 )
 
 # ---------------------------------------------------------------- PicoRuby
+# NOTE:
+# Two rake invocations are needed and neither subsumes the other: the picorbc
+# config builds the host compiler, and the x86_64-bare-metal config builds the
+# freestanding VM library but no binaries.
+#
+# The cross build compiles against musl's headers, hence DEPENDS musl.
+set(PICORUBY_LIB ${TP}/picoruby/build/x86_64-bare-metal/lib/libmruby.a)
+set(PICORBC      ${TP}/picoruby/bin/picorbc)
+
 ExternalProject_Add(picoruby
   SOURCE_DIR ${TP}/picoruby
+  DEPENDS musl
 
   DOWNLOAD_COMMAND ${CMAKE_COMMAND}
       -DDIR=${TP}/picoruby -DURL=${PICORUBY_URL} -DREF=${PICORUBY_REF}
@@ -142,13 +153,34 @@ ExternalProject_Add(picoruby
   PATCH_COMMAND ${CMAKE_COMMAND}
       -DDIR=${TP}/picoruby -P ${DEPS_DIR}/picoruby_submodules.cmake
 
-  UPDATE_COMMAND    ""
-  CONFIGURE_COMMAND ""
-  BUILD_COMMAND     ""
-  INSTALL_COMMAND   ""
-  USES_TERMINAL_DOWNLOAD ON
-  USES_TERMINAL_PATCH    ON
-  STEP_TARGETS download patch
+  UPDATE_COMMAND ""
+
+  # mruby's build system only looks for build configs inside its own tree, so
+  # the tracked original is copied in rather than referenced in place.
+  BUILD_IN_SOURCE 1
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      ${CMAKE_SOURCE_DIR}/picoruby_build/x86_64-bare-metal.rb
+      <SOURCE_DIR>/build_config/x86_64-bare-metal.rb
+
+  BUILD_COMMAND ${CMAKE_COMMAND} -E env
+          MRUBY_CONFIG=picorbc CC=${CLANG_EXECUTABLE} AR=${LLVM_AR_EXECUTABLE}
+          ${RAKE_EXECUTABLE} -j${NPROC}
+        COMMAND ${CMAKE_COMMAND} -E env
+          MRUBY_CONFIG=x86_64-bare-metal CC=${CLANG_EXECUTABLE} AR=${LLVM_AR_EXECUTABLE}
+          ${RAKE_EXECUTABLE} -j${NPROC}
+
+  INSTALL_COMMAND ${CMAKE_COMMAND}
+      -DARCHIVE=${PICORUBY_LIB} -DLLVM_AR=${LLVM_AR_EXECUTABLE}
+      -P ${DEPS_DIR}/picoruby_strip_allocf.cmake
+
+  BUILD_BYPRODUCTS ${PICORUBY_LIB} ${PICORBC}
+
+  USES_TERMINAL_DOWNLOAD  ON
+  USES_TERMINAL_PATCH     ON
+  USES_TERMINAL_CONFIGURE ON
+  USES_TERMINAL_BUILD     ON
+  USES_TERMINAL_INSTALL   ON
+  STEP_TARGETS download patch configure build install
 )
 
 # ---------------------------------------------------------------- verify for dev dependencies
@@ -185,6 +217,19 @@ add_files_exist_test(verify_clone_cruby
   ${TP}/cruby/lex.c.blt                   # lex.c is copied from here, so gperf is not needed
   ${TP}/cruby/ext/io/console/console.c    # statically linked later, not the io-console gem
   ${TP}/cruby/gems/bundled_gems)          # irb/reline versions are derived from this
+
+add_files_exist_test(verify_build_picoruby
+  ${PICORUBY_LIB}
+  ${PICORBC}
+  ${TP}/picoruby/build/x86_64-bare-metal/include/mruby/presym/id.h)  # generated headers the kernel compiles against
+
+add_test(NAME verify_picoruby_symbols COMMAND ${CMAKE_COMMAND}
+         -DARCHIVE=${PICORUBY_LIB} -DLLVM_NM=${LLVM_NM_EXECUTABLE}
+         -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/picoruby_symbols.cmake)
+
+add_test(NAME verify_picorbc_compiles COMMAND ${CMAKE_COMMAND}
+         -DPICORBC=${PICORBC} -DWORKDIR=${CMAKE_CURRENT_BINARY_DIR}
+         -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/picorbc_compiles.cmake)
 
 add_files_exist_test(verify_clone_picoruby
   ${TP}/picoruby/build_config/picorbc.rb
