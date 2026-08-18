@@ -3,3 +3,7 @@
 
 # CMake build trees (see CMakePresets.json).
 /build/
+
+# Working notes, not part of the repository.
+/PLAN_ja.md
+/docs/

@@ -13,7 +13,27 @@ cmake_minimum_required(VERSION 3.25.0)
 project(picoruby_kernel_superbuild LANGUAGES NONE)
 
 include(ExternalProject)
+include(ProcessorCount)
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/versions.cmake)
+
+# NOTE:
+# Resolved here rather than inside each step so a missing tool is a configure
+# error naming the tool, not a build error deep inside a dependency.
+find_package(Git REQUIRED)
+find_program(CLANG_EXECUTABLE clang REQUIRED)
+find_program(LLVM_AR_EXECUTABLE llvm-ar REQUIRED)
+find_program(LLVM_RANLIB_EXECUTABLE llvm-ranlib REQUIRED)
+find_program(LLVM_NM_EXECUTABLE llvm-nm REQUIRED)
+find_program(LLVM_OBJDUMP_EXECUTABLE llvm-objdump REQUIRED)
+find_program(MAKE_EXECUTABLE make REQUIRED)
+
+# NOTE:
+# "cmake --build --parallel" does not reach the make/rake invocations inside an
+# ExternalProject, so the job count has to be passed down explicitly.
+ProcessorCount(NPROC)
+if(NPROC EQUAL 0)
+  set(NPROC 1)
+endif()
 
 # NOTE:
 # Collect the ExternalProject bookkeeping (stamp/, tmp/, log/) under one
@@ -49,6 +69,14 @@ set(DEPS_DIR ${CMAKE_CURRENT_LIST_DIR}/cmake/deps)
 # Only the acquisition steps are defined here. Build steps are added later.
 
 # ---------------------------------------------------------------- musl
+# NOTE:
+# patches/musl.patch replaces arch/x86_64/syscall_arch.h so that musl calls
+# kernel_syscall() instead of issuing the syscall instruction, which would fault
+# in ring0. It also drops the vDSO defines, since there is no auxv to resolve
+# __vdso_clock_gettime from. This takes libc.a from 511 syscall instructions
+# down to 8, all in hand-written assembly on paths this kernel does not take.
+#
+# Two libc flavours come out of this stage; see cmake/deps/musl_strip_objects.cmake.
 ExternalProject_Add(musl
   SOURCE_DIR ${TP}/musl
 
@@ -56,13 +84,32 @@ ExternalProject_Add(musl
       -DDIR=${TP}/musl -DURL=${MUSL_URL} -DREF=${MUSL_REF}
       -P ${DEPS_DIR}/fetch_sha.cmake
 
-  UPDATE_COMMAND    ""  # the ref is pinned, so never re-fetch; works offline
-  CONFIGURE_COMMAND ""
-  BUILD_COMMAND     ""
-  INSTALL_COMMAND   ""
+  UPDATE_COMMAND ""  # the ref is pinned, so never re-fetch; works offline
 
-  USES_TERMINAL_DOWNLOAD ON  # stream progress; without it a long step looks hung
-  STEP_TARGETS download      # enables: cmake --build build/dev -t musl-download
+  PATCH_COMMAND ${CMAKE_COMMAND}
+      -DDIR=${TP}/musl -DPATCH=${CMAKE_SOURCE_DIR}/patches/musl.patch
+      -P ${DEPS_DIR}/apply_patch.cmake
+
+  # musl's configure only supports building in the source tree.
+  BUILD_IN_SOURCE 1
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env
+      CC=${CLANG_EXECUTABLE} AR=${LLVM_AR_EXECUTABLE} RANLIB=${LLVM_RANLIB_EXECUTABLE}
+      ./configure --target=x86_64 --prefix=<SOURCE_DIR>/install
+                  --disable-shared --enable-static
+  BUILD_COMMAND ${MAKE_EXECUTABLE} -j${NPROC}
+  INSTALL_COMMAND ${MAKE_EXECUTABLE} install
+          COMMAND ${CMAKE_COMMAND}
+              -DDIR=<SOURCE_DIR> -DLLVM_AR=${LLVM_AR_EXECUTABLE}
+              -P ${DEPS_DIR}/musl_strip_objects.cmake
+
+  BUILD_BYPRODUCTS ${TP}/musl/install/lib/libc.a ${TP}/musl/lib/libc_kernel.a
+
+  USES_TERMINAL_DOWNLOAD  ON  # stream progress; without it a long step looks hung
+  USES_TERMINAL_PATCH     ON
+  USES_TERMINAL_CONFIGURE ON
+  USES_TERMINAL_BUILD     ON
+  USES_TERMINAL_INSTALL   ON
+  STEP_TARGETS download patch configure build install  # cmake --build build/dev -t musl-build
 )
 
 # ---------------------------------------------------------------- CRuby
@@ -119,6 +166,17 @@ endfunction()
 
 add_files_exist_test(verify_clone_musl
   ${TP}/musl/configure ${TP}/musl/src/malloc/mallocng/malloc.c)
+
+add_files_exist_test(verify_build_musl
+  ${TP}/musl/install/lib/libc.a       # full musl, for the PicoRuby-only kernel
+  ${TP}/musl/install/include/stdio.h  # headers the PicoRuby cross build compiles against
+  ${TP}/musl/lib/libc_kernel.a)       # allocator removed, for the CRuby kernel
+
+add_test(NAME verify_musl_patched COMMAND ${CMAKE_COMMAND}
+         -DDIR=${TP}/musl
+         -DLLVM_NM=${LLVM_NM_EXECUTABLE}
+         -DLLVM_OBJDUMP=${LLVM_OBJDUMP_EXECUTABLE}
+         -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/musl_symbols.cmake)
 
 add_files_exist_test(verify_clone_cruby
   ${TP}/cruby/parse.y
