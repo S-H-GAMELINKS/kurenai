@@ -1,0 +1,5 @@
+# Third-party sources fetched by cmake/deps/fetch_sha.cmake (~370MB).
+/third_party/
+
+# CMake build trees (see CMakePresets.json).
+/build/

@@ -1,0 +1,21 @@
+# NOTE:
+# Every dependency is pinned by a full 40-hex SHA, never by a tag or branch.
+# A tag can be moved; a SHA cannot. cmake/deps/fetch_sha.cmake also rejects
+# anything shorter, because "git fetch" cannot resolve an abbreviated SHA
+# ("fatal: couldn't find remote ref").
+
+# Set musl libc version
+# The upstream repository is https://git.musl-libc.org/git/musl, but a shallow
+# clone from it takes ~30s. kraj/musl is a mirror of it and takes ~1.4s; both
+# resolve v1.2.5 to the same SHA and produce an identical tree.
+set(MUSL_URL     https://github.com/kraj/musl.git)
+set(MUSL_REF     0784374d561435f7c787a555aeab8ede699ed298)  # v1.2.5
+
+# Set CRuby version
+set(CRUBY_URL    https://github.com/ruby/ruby.git)
+set(CRUBY_REF    03b6d3f8898a28604fe6cb00eae3226b821168f4)  # v4.0.6
+
+# Set PicoRuby version
+# There is no tag at this commit, which is why the SHA appears bare here.
+set(PICORUBY_URL https://github.com/picoruby/picoruby.git)
+set(PICORUBY_REF 906e37f1e13d32d31e954b8e62f549396d78a562)
