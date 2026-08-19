@@ -9,9 +9,9 @@
  * returns -ENOSYS and names itself on the console, which turns "the kernel
  * hangs" into "the kernel was asked for syscall 218".
  *
- * This is C for now. The plan is to move the policy half of it into Ruby, so
- * that file descriptors, the VFS and the terminal are implemented by the
- * PicoRuby VM; the mechanism half (memory, time, the CPU) stays here. */
+ * The policy half is moving into Ruby a syscall at a time; see kernel/bridge.c
+ * and ruby/kernel/syscall.rb. What stays here is the mechanism half -- memory,
+ * time, the CPU -- and everything not yet moved. */
 
 #include <errno.h>
 #include <stddef.h>
@@ -284,8 +284,9 @@ report_unhandled(long n)
     serial_putc('\n');
 }
 
+/* Reached from kernel/bridge.c for everything not routed to Ruby. */
 long
-kernel_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6)
+kernel_syscall_c(long n, long a1, long a2, long a3, long a4, long a5, long a6)
 {
     (void)a4; (void)a5; (void)a6;
 

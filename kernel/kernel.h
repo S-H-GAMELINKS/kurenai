@@ -31,13 +31,22 @@ void  *memory_alloc_pages(size_t length);
 size_t memory_used(void);
 size_t memory_available(void);
 
-/* Starts the PicoRuby VM and runs the embedded boot script. */
+/* The PicoRuby VM. It stays open for the life of the system, because the
+ * syscall dispatcher runs in it. */
 void vm_start(void);
+struct mrb_state;
+struct mrb_state *vm_state(void);
+void vm_report_syscalls(void);
 
 /* Starts CRuby and evaluates the userland script. */
 void cruby_start(void);
 
-/* Called by musl in place of the syscall instruction; see kernel/syscall.c. */
+/* Called by musl in place of the syscall instruction. bridge.c decides whether
+ * a call goes to Ruby or stays in C; syscall.c is the C half. */
 long kernel_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6);
+long kernel_syscall_c(long n, long a1, long a2, long a3, long a4, long a5, long a6);
+
+/* Sends one syscall number to Kernel::Syscall.dispatch from now on. */
+void bridge_route(long number);
 
 #endif /* PICORUBY_KERNEL_H */

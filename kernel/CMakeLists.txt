@@ -37,6 +37,13 @@ add_custom_command(
   DEPENDS ${RUBY_DIR}/kernel/boot.rb ${PICORBC}
   COMMENT "Compiling ruby/kernel/boot.rb")
 
+set(SYSCALL_BYTECODE ${CMAKE_CURRENT_BINARY_DIR}/syscall_bytecode.c)
+add_custom_command(
+  OUTPUT ${SYSCALL_BYTECODE}
+  COMMAND ${PICORBC} -B syscall_bytecode -o ${SYSCALL_BYTECODE} ${RUBY_DIR}/kernel/syscall.rb
+  DEPENDS ${RUBY_DIR}/kernel/syscall.rb ${PICORBC}
+  COMMENT "Compiling ruby/kernel/syscall.rb")
+
 # ---------------------------------------------------------------- Ruby -> string
 # The CRuby side has no bytecode compiler available at build time, and no
 # filesystem to read from at run time, so its script is embedded as source and
@@ -66,7 +73,9 @@ add_executable(kernel64.elf
   memory.c
   enc.c
   cruby.c
+  bridge.c
   ${BOOT_BYTECODE}
+  ${SYSCALL_BYTECODE}
   ${USERLAND_SCRIPT})
 
 target_include_directories(kernel64.elf PRIVATE

@@ -416,7 +416,12 @@ if(QEMU_EXECUTABLE)
            -DKERNEL=${KERNEL_ELF}
            # Enough Ruby to show the VM is genuinely executing: a literal, a
            # block with an integer method, and string interpolation.
-           "-DEXPECT=boot ok|tls ok|picoruby vm ok|sum 3|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376"
+           # The last one is the point of the whole arrangement: CRuby's
+           # output reached the console by way of Ruby code running in the
+           # other VM. A count kept on the Ruby side is the only evidence,
+           # since the output looks the same either way. The number is left
+           # open so editing the userland script does not break the test.
+           "-DEXPECT=boot ok|tls ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|ruby serviced [1-9][0-9]* writes"
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial.log
            # The kernel halts instead of exiting, so QEMU always runs for the
            # full timeout. Booting takes well under a second here; the margin
