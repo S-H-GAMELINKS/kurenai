@@ -30,11 +30,12 @@ puts "read #{File.size("/hello.rb")} bytes from the Ruby VFS"
 require "io/console"
 require "ripper"
 puts "io/console: IO#raw #{IO.method_defined?(:raw)}"
-# Ripper is registered and its constants exist, but calling into it hangs:
-# the parse.y parser it uses is not functional in this build, while the Prism
-# path that eval uses is. irb's RubyLex depends on Ripper, so this is the thing
-# to resolve next.
-puts "ripper: defined=#{defined?(Ripper) ? true : false} (not yet usable)"
+# The C half of Ripper is linked in and registered. Its Ruby half --
+# Ripper.lex, Ripper::Lexer, Ripper.sexp -- lives in ext/ripper/lib and is not
+# embedded yet, so those are still missing. irb's RubyLex needs them, which
+# makes a working require the next thing to build.
+puts "ripper: #{defined?(Ripper) ? "class present" : "missing"}, " \
+     "Ripper.lex #{Ripper.respond_to?(:lex) ? "available" : "not embedded yet"}"
 
 # ---------------------------------------------------------------- the REPL
 #

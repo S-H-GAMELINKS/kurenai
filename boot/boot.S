@@ -29,6 +29,10 @@ stack_top:
 pml4:    .skip 4096
 pdpt:    .skip 4096
 pd:      .skip 4096
+/* The first 2MB is described by 4KB pages instead of one large page, so that
+ * the page at address zero can be left out. Everything above it, including
+ * this stub and the GDT, stays mapped. */
+pt0:     .skip 4096
 
 .section .rodata
 .align 16
@@ -78,6 +82,27 @@ _start:
     add $8, %edi
     dec %ecx
     jnz 1b
+
+    /* Replace the first 2MB with 4KB pages, leaving page zero absent. Without
+     * this a null dereference reads zeros and the code carries on into a loop,
+     * which is how two separate bugs in this project presented as hangs. With
+     * it, the fault handler names the address. */
+    mov $pt0, %edi
+    add $8, %edi                /* skip entry 0: address zero stays unmapped */
+    mov $0x1003, %eax           /* second page: present | writable */
+    xor %edx, %edx
+    mov $511, %ecx
+2:  mov %eax, (%edi)
+    mov %edx, 4(%edi)
+    add $0x1000, %eax
+    add $8, %edi
+    dec %ecx
+    jnz 2b
+
+    mov $pt0, %eax
+    or $0x03, %eax              /* present | writable, and not a large page */
+    mov %eax, (pd)
+    movl $0, (pd + 4)
 
     /* PAE, plus OSFXSR and OSXMMEXCPT so SSE is usable. CRuby's floating
      * point paths need it and fault immediately without it. */

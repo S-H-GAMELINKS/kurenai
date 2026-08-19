@@ -91,12 +91,14 @@ add_custom_command(
 # ---------------------------------------------------------------- 64-bit kernel
 add_executable(kernel64.elf
   entry64.S
+  isr.S
+  idt.c
   main.c
   serial.c
   vm.c
   hal.c
   syscall.c
-  tls.c
+  libc_init.c
   timer.c
   musl_stubs.c
   memory.c

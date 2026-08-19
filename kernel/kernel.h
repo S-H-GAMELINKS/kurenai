@@ -17,13 +17,17 @@ size_t serial_read(char *buf, size_t len);
 /* Entry point called from entry64.S. */
 void kernel_main(void);
 
+/* Installs handlers for the CPU's exceptions, so a fault reports itself
+ * instead of resetting the machine. */
+void idt_init(void);
+
 /* Monotonic time since boot, from the TSC calibrated against the PIT. */
 void     timer_init(void);
 uint64_t timer_millis(void);
 uint64_t timer_nanos(void);
 
-/* Points musl's thread pointer at a usable block; errno depends on it. */
-void tls_init(void);
+/* Does what __libc_start_main would have: thread pointer, auxiliary vector. */
+void libc_init(void);
 
 /* Pages handed out through mmap, taken from RAM above the kernel image. */
 void   memory_init(void);

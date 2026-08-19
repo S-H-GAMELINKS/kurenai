@@ -13,11 +13,15 @@ kernel_main(void)
     serial_init();
     serial_puts("boot ok\n");
 
+    /* First, so that everything after it can fail legibly. */
+    idt_init();
+    serial_puts("traps ok\n");
+
     timer_init();
     serial_puts("timer ok\n");
 
-    tls_init();
-    serial_puts("tls ok\n");
+    libc_init();
+    serial_puts("libc ok\n");
 
     memory_init();
     serial_puts("memory ok\n");
