@@ -17,4 +17,10 @@ size_t serial_read(char *buf, size_t len);
 /* Entry point called from entry64.S. */
 void kernel_main(void);
 
+/* Starts the PicoRuby VM and runs the embedded boot script. */
+void vm_start(void);
+
+/* Called by musl in place of the syscall instruction; see kernel/syscall.c. */
+long kernel_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6);
+
 #endif /* PICORUBY_KERNEL_H */

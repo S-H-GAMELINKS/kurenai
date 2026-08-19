@@ -1,5 +1,8 @@
-# cmake -DQEMU=<qemu> -DKERNEL=<kernel.elf> -DEXPECT=<text> -DLOG=<file> [-DSECONDS=n]
-#       -P boot_serial.cmake
+# cmake -DQEMU=<qemu> -DKERNEL=<kernel.elf> -DEXPECT=<a|b|c> -DLOG=<file>
+#       [-DSECONDS=n] -P boot_serial.cmake
+#
+# EXPECT is one or more regular expressions separated by "|", all of which must
+# appear. A CMake list cannot be used: add_test splits arguments on semicolons.
 #
 # Boots the kernel and looks for a string on the serial console. This is the
 # only check that covers the whole path at once: the Multiboot header being
@@ -40,11 +43,22 @@ if(NOT EXISTS "${LOG}")
 endif()
 
 file(READ "${LOG}" serial)
-if(NOT serial MATCHES "${EXPECT}")
-  string(LENGTH "${serial}" n)
+
+string(REPLACE "|" ";" patterns "${EXPECT}")
+set(unmatched "")
+foreach(pattern IN LISTS patterns)
+  if(NOT serial MATCHES "${pattern}")
+    list(APPEND unmatched "${pattern}")
+  endif()
+endforeach()
+
+if(unmatched)
+  string(REPLACE ";" "\n  " pretty "${unmatched}")
   message(FATAL_ERROR
-    "expected '${EXPECT}' on the serial console, got ${n} bytes:\n${serial}\n"
+    "the serial console did not show:\n  ${pretty}\n"
+    "what it did show:\n${serial}\n"
     "QEMU result: ${rc}\n${err}")
 endif()
 
-message(STATUS "ok: booted and printed '${EXPECT}'")
+list(LENGTH patterns n)
+message(STATUS "ok: booted and printed all ${n} expected lines")

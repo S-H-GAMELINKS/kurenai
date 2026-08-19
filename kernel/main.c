@@ -1,8 +1,7 @@
 /* Kernel entry.
  *
- * At this milestone the kernel only proves the machine is in the state the
- * rest of the system will assume: long mode, identity-mapped memory, a working
- * console. The PicoRuby VM comes next. */
+ * The C here does as little as it can: bring up the console, then hand control
+ * to Ruby. What the kernel does on boot is written in ruby/kernel/boot.rb. */
 
 #include "kernel.h"
 
@@ -11,4 +10,8 @@ kernel_main(void)
 {
     serial_init();
     serial_puts("boot ok\n");
+
+    vm_start();
+
+    serial_puts("kernel: boot.rb returned\n");
 }

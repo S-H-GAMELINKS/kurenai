@@ -18,19 +18,61 @@
 cmake_minimum_required(VERSION 3.25)
 project(picoruby_kernel LANGUAGES C ASM)
 
-if(NOT BOOT_DIR)
-  message(FATAL_ERROR "kernel: -DBOOT_DIR=<boot source dir> is required")
-endif()
+foreach(v BOOT_DIR RUBY_DIR PICORBC PICORUBY_LIB PICORUBY_INCLUDE_DIRS MUSL_INSTALL)
+  if(NOT ${v})
+    message(FATAL_ERROR "kernel: -D${v}=... is required")
+  endif()
+endforeach()
 
 find_program(LLD_EXECUTABLE ld.lld REQUIRED)
+
+# ---------------------------------------------------------------- Ruby -> C
+# picorbc emits the bytecode as a C array directly, so no separate embedding
+# step is needed. The array lands in .rodata, inside the etext/edata range, and
+# mruby therefore runs it in place instead of copying it to the heap.
+set(BOOT_BYTECODE ${CMAKE_CURRENT_BINARY_DIR}/boot_bytecode.c)
+add_custom_command(
+  OUTPUT ${BOOT_BYTECODE}
+  COMMAND ${PICORBC} -B kernel_bytecode -o ${BOOT_BYTECODE} ${RUBY_DIR}/kernel/boot.rb
+  DEPENDS ${RUBY_DIR}/kernel/boot.rb ${PICORBC}
+  COMMENT "Compiling ruby/kernel/boot.rb")
 
 # ---------------------------------------------------------------- 64-bit kernel
 add_executable(kernel64.elf
   entry64.S
   main.c
-  serial.c)
+  serial.c
+  vm.c
+  hal.c
+  syscall.c
+  ${BOOT_BYTECODE})
 
-target_include_directories(kernel64.elf PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(kernel64.elf PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${PICORUBY_INCLUDE_DIRS})
+
+# NOTE:
+# These have to match picoruby_build/x86_64-bare-metal.rb exactly. They change
+# the layout of mrb_value and mrb_int, so a mismatch links cleanly and then
+# misbehaves at run time: the kernel and the library disagree about what a
+# Ruby object is, and every type check reads the wrong bytes. vm.c carries a
+# static assertion so the next mismatch is a compile error instead.
+target_compile_definitions(kernel64.elf PRIVATE
+  MRB_INT64
+  MRB_NO_BOXING
+  MRB_UTF8_STRING
+  PICORB_ALLOC_ESTALLOC
+  PICORB_ALLOC_ALIGN=8
+  NO_CLOCK_GETTIME=1)
+
+# NOTE:
+# The full musl, not the stripped one. The VM allocates from its own pool, but
+# musl's stdio still wants an allocator underneath it, and nothing in this
+# kernel provides one yet. The stripped flavour becomes the right choice when
+# CRuby arrives with its own.
+target_link_libraries(kernel64.elf PRIVATE
+  ${PICORUBY_LIB}
+  ${MUSL_INSTALL}/lib/libc.a)
 
 target_link_options(kernel64.elf PRIVATE
   -nostdlib

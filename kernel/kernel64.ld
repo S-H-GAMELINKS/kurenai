@@ -15,8 +15,19 @@ SECTIONS
     *(.text*)
   }
 
+  /* mruby decides whether a pointer is read-only data with
+   *     &etext < p && p < &edata
+   * (mrbconf.h turns that on for __linux__, which clang defines for this
+   * target). Bytecode and string literals live in .rodata and must fall inside
+   * the range so mruby treats them as static and does not copy them; the VM
+   * pool lives in .bss and must fall outside. Placing etext after .text and
+   * edata after .data gives exactly that. */
+  etext = .;
+
   .rodata : { *(.rodata*) }
   .data   : { *(.data*) }
+
+  edata = .;
 
   .bss : {
     . = ALIGN(8);

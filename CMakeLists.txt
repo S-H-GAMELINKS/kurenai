@@ -231,6 +231,13 @@ ExternalProject_Add(cruby_cross
 # The cross build compiles against musl's headers, hence DEPENDS musl.
 set(PICORUBY_LIB ${TP}/picoruby/build/x86_64-bare-metal/lib/libmruby.a)
 set(PICORBC      ${TP}/picoruby/bin/picorbc)
+# Both the VM headers and the presym tables generated for this build config.
+set(PICORUBY_INCLUDE_DIRS
+    ${TP}/picoruby/mrbgems/picoruby-mruby/lib/mruby/include
+    ${TP}/picoruby/include
+    ${TP}/picoruby/build/x86_64-bare-metal/include
+    ${TP}/picoruby/mrbgems/picoruby-mruby/lib/mruby/mrbgems/mruby-task/include)
+string(REPLACE ";" "|" PICORUBY_INCLUDE_DIRS_ARG "${PICORUBY_INCLUDE_DIRS}")
 
 ExternalProject_Add(picoruby
   SOURCE_DIR ${TP}/picoruby
@@ -278,9 +285,8 @@ ExternalProject_Add(picoruby
 
 # ---------------------------------------------------------------- kernel
 # NOTE:
-# At this milestone the kernel depends on none of the libraries yet; it only
-# has to reach long mode with a working console. The dependencies are added as
-# it starts using them.
+# CRuby is not linked in yet; the kernel currently runs the PicoRuby VM and the
+# Ruby boot script only.
 set(KERNEL_DIR   ${CMAKE_BINARY_DIR}/kernel)
 set(KERNEL_ELF   ${KERNEL_DIR}/kernel.elf)
 set(KERNEL64_ELF ${KERNEL_DIR}/kernel64.elf)
@@ -288,15 +294,26 @@ set(KERNEL64_ELF ${KERNEL_DIR}/kernel64.elf)
 ExternalProject_Add(kernel
   SOURCE_DIR ${CMAKE_SOURCE_DIR}/kernel
   BINARY_DIR ${KERNEL_DIR}
+  DEPENDS musl picoruby
 
   DOWNLOAD_COMMAND ""
   UPDATE_COMMAND   ""
   INSTALL_COMMAND  ""
 
+  # NOTE:
+  # A CMake list reaching a child project through CMAKE_ARGS loses its
+  # semicolons, so the whole list arrives as one path. LIST_SEPARATOR names a
+  # stand-in that ExternalProject converts back on the way in.
+  LIST_SEPARATOR |
+
   CMAKE_ARGS
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchain-x86_64-bare-metal.cmake
     -DMUSL_INSTALL=${TP}/musl/install
     -DBOOT_DIR=${CMAKE_SOURCE_DIR}/boot
+    -DRUBY_DIR=${CMAKE_SOURCE_DIR}/ruby
+    -DPICORBC=${PICORBC}
+    -DPICORUBY_LIB=${PICORUBY_LIB}
+    -DPICORUBY_INCLUDE_DIRS=${PICORUBY_INCLUDE_DIRS_ARG}
     -DCMAKE_BUILD_TYPE=Release
 
   BUILD_BYPRODUCTS ${KERNEL_ELF} ${KERNEL64_ELF}
@@ -398,7 +415,9 @@ if(QEMU_EXECUTABLE)
   add_test(NAME verify_kernel_boots COMMAND ${CMAKE_COMMAND}
            -DQEMU=${QEMU_EXECUTABLE}
            -DKERNEL=${KERNEL_ELF}
-           -DEXPECT=boot\ ok
+           # Enough Ruby to show the VM is genuinely executing: a literal, a
+           # block with an integer method, and string interpolation.
+           "-DEXPECT=boot ok|picoruby vm ok|sum 3"
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial.log
            # The kernel halts instead of exiting, so QEMU always runs for the
            # full timeout. Booting takes well under a second here; the margin
