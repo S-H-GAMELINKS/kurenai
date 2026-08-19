@@ -41,6 +41,8 @@ module Kernel
     end
 
     def self.directory?(path)
+      return false if path.empty?
+
       DIRECTORIES[normalize(path)] == true
     end
 
@@ -48,6 +50,11 @@ module Kernel
     # produces things like "//ripper.rb" when the entry is "/". Collapsing
     # repeated separators and resolving "." and ".." is the filesystem's job,
     # not the caller's.
+    #
+    # An empty path is not the root. It normalizes to "/" like everything else
+    # made only of separators, so it has to be refused before it gets here:
+    # File.exist?("") answering true sent irb looking for a history file it had
+    # no name for.
     def self.normalize(path)
       parts = []
       path.split("/").each do |part|
@@ -62,6 +69,8 @@ module Kernel
     end
 
     def self.exist?(path)
+      return false if path.empty?
+
       !TABLE[normalize(path)].nil?
     end
 

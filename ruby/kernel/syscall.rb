@@ -21,6 +21,9 @@ module Kernel
     NR_FSTAT     = 5
     NR_LSTAT     = 6
     NR_NEWFSTATAT = 262
+    NR_IOCTL      = 16
+    NR_POLL       = 7
+    NR_PPOLL      = 271
     NR_GETCWD     = 79
     NR_ACCESS     = 21
     NR_FACCESSAT  = 269
@@ -70,6 +73,9 @@ module Kernel
       when NR_FSTAT  then sys_fstat(a1, a2)
       when NR_STAT, NR_LSTAT then sys_stat(a1, a2)
       when NR_NEWFSTATAT     then sys_stat(a2, a3)
+      when NR_IOCTL          then sys_ioctl(a1, a2, a3)
+      when NR_POLL           then sys_poll(a1, a2, a3)
+      when NR_PPOLL          then sys_ppoll(a1, a2, a3)
       when NR_GETCWD         then sys_getcwd(a1, a2)
       when NR_ACCESS         then sys_access(a1)
       when NR_FACCESSAT, NR_FACCESSAT2 then sys_access(a2)
@@ -128,35 +134,62 @@ module Kernel
       length
     end
 
-    # The beginnings of a line discipline, and the reason it belongs in Ruby.
+    # The line discipline, and the reason it belongs in Ruby.
     #
-    # A terminal sends carriage return when Return is pressed, and a program
-    # calling gets waits for a line feed, so something has to translate. The
-    # terminal is also not echoing -- there is no terminal, only a serial port
-    # -- so the kernel has to show the user what they typed. Neither of these
-    # is a property of the hardware; both are policy, and this is where policy
-    # lives.
+    # In canonical mode a read waits for a line, Return arrives as carriage
+    # return and has to become line feed, and the kernel echoes so that typing
+    # is visible. In raw mode a line editor has taken over: it draws the line
+    # itself, so nothing is echoed and nothing is translated, and a read
+    # returns as soon as VMIN bytes are there or VTIME expires.
+    #
+    # Reline switches between the two several times per keystroke. None of it
+    # is a property of the serial port.
     CR = 13
     LF = 10
 
     def self.read_console(buffer, count)
+      return read_raw(buffer, count) unless TTY.canonical?
+
       length = serial_read(buffer, count)
       return length if length <= 0
 
-      bytes = read_bytes(buffer, length)
-      translated = false
-      i = 0
-      while i < bytes.length
-        if bytes[i] == CR
-          bytes[i] = LF
-          translated = true
+      if TTY.translate_cr?
+        bytes = read_bytes(buffer, length)
+        translated = false
+        i = 0
+        while i < bytes.length
+          if bytes[i] == CR
+            bytes[i] = LF
+            translated = true
+          end
+          i += 1
         end
-        i += 1
+        write_bytes(buffer, bytes) if translated
       end
-      write_bytes(buffer, bytes) if translated
 
-      # Echo, so typing is visible.
-      serial_write(buffer, length)
+      serial_write(buffer, length) if TTY.echo?
+      length
+    end
+
+    # VMIN 0 with VTIME 0 means "whatever is there, do not wait", which is how
+    # Reline asks whether a byte has arrived without committing to waiting for
+    # one. Returning 0 there is a real answer, not end of file, and the caller
+    # reads it as nil.
+    def self.read_raw(buffer, count)
+      minimum = TTY.min_bytes
+      deadline = TTY.time_tenths > 0 ? clock_millis + TTY.time_tenths * 100 : nil
+
+      if minimum == 0 && deadline.nil?
+        return serial_ready? ? serial_read_ready(buffer, count) : 0
+      end
+
+      until serial_ready?
+        return 0 if deadline && clock_millis >= deadline
+        idle
+      end
+
+      length = serial_read_ready(buffer, count)
+      serial_write(buffer, length) if TTY.echo? && length > 0
       length
     end
 
@@ -222,6 +255,80 @@ module Kernel
     end
 
     ERANGE = -34
+    ENOTTY = -25
+
+    # ---------------------------------------------------------------- terminal
+
+    TCGETS     = 0x5401
+    TCSETS     = 0x5402
+    TCSETSW    = 0x5403
+    TCSETSF    = 0x5404
+    TIOCGWINSZ = 0x5413
+    TIOCSWINSZ = 0x5414
+
+    # Only the console is a terminal. Answering TCGETS is also what makes it
+    # one: isatty is a successful TCGETS and nothing else, so this decides
+    # whether CRuby and Reline believe they are talking to a person.
+    def self.sys_ioctl(fd, request, address)
+      return ENOTTY unless FD.console?(fd)
+      return EFAULT if address == 0
+
+      case request
+      when TCGETS                     then TTY.get_termios(address)
+      when TCSETS, TCSETSW, TCSETSF   then TTY.set_termios(address)
+      when TIOCGWINSZ                 then TTY.get_winsize(address)
+      when TIOCSWINSZ                 then TTY.set_winsize(address)
+      else ENOTTY
+      end
+    end
+
+    # ---------------------------------------------------------------- waiting
+
+    POLLIN = 0x0001
+
+    # struct pollfd is { int fd; short events; short revents; }.
+    POLLFD_SIZE = 8
+
+    # A polled serial port has nothing to sleep on, so waiting means asking
+    # again until the answer changes or the time runs out. timeout is in
+    # milliseconds; negative means wait indefinitely.
+    def self.sys_poll(fds, nfds, timeout_ms)
+      deadline = timeout_ms < 0 ? nil : clock_millis + timeout_ms
+
+      loop do
+        ready = 0
+        i = 0
+        while i < nfds
+          entry = fds + i * POLLFD_SIZE
+          fd = peek32(entry)
+          revents = 0
+          if fd == FD::CONSOLE_IN && serial_ready?
+            revents = POLLIN
+          elsif fd == FD::CONSOLE_OUT || fd == FD::CONSOLE_ERR
+            revents = 0   # writable, but nothing asks about that here
+          end
+          poke16(entry + 6, revents)
+          ready += 1 if revents != 0
+          i += 1
+        end
+
+        return ready if ready > 0
+        return 0 if deadline && clock_millis >= deadline
+
+        idle
+      end
+    end
+
+    # ppoll's timeout is a struct timespec rather than milliseconds.
+    def self.sys_ppoll(fds, nfds, timespec)
+      if timespec == 0
+        sys_poll(fds, nfds, -1)
+      else
+        seconds = peek64(timespec)
+        nanos = peek64(timespec + 8)
+        sys_poll(fds, nfds, seconds * 1000 + nanos / 1_000_000)
+      end
+    end
 
     # There is one directory and everything is in it. Linux returns the length
     # including the terminating NUL.

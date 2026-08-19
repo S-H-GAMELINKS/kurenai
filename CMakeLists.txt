@@ -460,17 +460,25 @@ if(QEMU_EXECUTABLE)
            -DSECONDS=5
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/boot_serial.cmake)
 
-  # Drives irb over the serial console: input goes in, results come back.
+  # Drives irb through a stand-in terminal, exercising the three things that
+  # separate this from the dumb terminal irb started out on. The session types
+  # "1 + 9", backspaces over the 9 and types 3; recalls that line with the up
+  # arrow; and completes "[1,2].ma" with Tab. Editing, history, completion.
   add_test(NAME verify_irb COMMAND ${CMAKE_COMMAND}
+           -DRUBY=${RUBY_EXECUTABLE}
+           -DDRIVER=${CMAKE_SOURCE_DIR}/test/terminal_driver.rb
            -DQEMU=${QEMU_EXECUTABLE}
            -DKERNEL=${KERNEL_ELF}
            -DINPUT=${CMAKE_SOURCE_DIR}/test/irb_session.txt
-           -DLOG=${CMAKE_CURRENT_BINARY_DIR}/irb_serial.log
-           # irb takes a few seconds to load 200-odd files through the VFS.
-           -DSECONDS=40
-           -DINPUT_DELAY=8
-           "-DEXPECT=irb 1[.0-9]* loaded|irb\\(main\\):001|=> 2|=> \\[3, 6, 9\\]|irb finished"
-           -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/boot_serial.cmake)
+           -DLOG=${CMAKE_CURRENT_BINARY_DIR}/irb_session.log
+           # irb loads 200-odd files through the VFS before the first prompt.
+           -DSECONDS=60
+           # No space: an escaped one does not survive the trip to the driver.
+           -DUNTIL=irb.finished
+                      # Character classes rather than backslash escapes: CMake's regular
+           # expressions are not the ones the shell or Ruby would give you.
+           "-DEXPECT=irb 1[.0-9]* loaded|irb[(]main[)]:001> 1 [+] 3|=> 4|irb[(]main[)]:002> 1 [+] 3|irb[(]main[)]:003> [[]1,2[]].map!|irb finished"
+           -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/irb_session.cmake)
 endif()
 
 add_files_exist_test(verify_clone_picoruby

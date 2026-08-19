@@ -52,6 +52,9 @@ kernel_main(void)
     bridge_route(21  /* SYS_access     */);
     bridge_route(269 /* SYS_faccessat  */);
     bridge_route(439 /* SYS_faccessat2 */);
+    bridge_route(16  /* SYS_ioctl      */);   /* the terminal is Ruby's now */
+    bridge_route(7   /* SYS_poll       */);
+    bridge_route(271 /* SYS_ppoll      */);
     bridge_route(8   /* SYS_lseek  */);
     bridge_route(22  /* SYS_pipe   */);
     bridge_route(293 /* SYS_pipe2  */);

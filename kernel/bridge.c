@@ -155,6 +155,63 @@ prim_embedded_files(mrb_state *mrb, mrb_value self)
 }
 
 static mrb_value
+prim_peek32(mrb_state *mrb, mrb_value self)
+{
+    mrb_int address;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &address);
+    return mrb_int_value(mrb, (mrb_int)*(uint32_t *)(uintptr_t)address);
+}
+
+static mrb_value
+prim_poke16(mrb_state *mrb, mrb_value self)
+{
+    mrb_int address, value;
+    (void)self;
+
+    mrb_get_args(mrb, "ii", &address, &value);
+    *(uint16_t *)(uintptr_t)address = (uint16_t)value;
+    return mrb_nil_value();
+}
+
+/* Has a byte arrived? Asked by the poll implementation and by the raw-mode
+ * read, both of which have to decide whether to wait without committing to it. */
+static mrb_value
+prim_serial_ready(mrb_state *mrb, mrb_value self)
+{
+    (void)mrb; (void)self;
+    return serial_data_ready() ? mrb_true_value() : mrb_false_value();
+}
+
+/* Reads only what has already arrived, unlike serial_read, which blocks for
+ * the first byte. Raw mode needs the distinction. */
+static mrb_value
+prim_serial_read_ready(mrb_state *mrb, mrb_value self)
+{
+    mrb_int address, count;
+    (void)self;
+
+    mrb_get_args(mrb, "ii", &address, &count);
+
+    char *out = (char *)(uintptr_t)address;
+    mrb_int n = 0;
+    while (n < count && serial_data_ready())
+        out[n++] = (char)serial_getc();
+    return mrb_int_value(mrb, n);
+}
+
+/* Lets the CPU rest between polls. Without it a wait is a tight loop, which
+ * costs nothing here but says the wrong thing about what the kernel is doing. */
+static mrb_value
+prim_idle(mrb_state *mrb, mrb_value self)
+{
+    (void)mrb; (void)self;
+    __asm__ volatile ("pause");
+    return mrb_nil_value();
+}
+
+static mrb_value
 prim_poke32(mrb_state *mrb, mrb_value self)
 {
     mrb_int address, value;
@@ -271,6 +328,16 @@ bridge_init(mrb_state *mrb)
                                prim_embedded_files, MRB_ARGS_NONE());
     mrb_define_module_function(mrb, syscall_module, "alloc_pages",
                                prim_alloc_pages, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, syscall_module, "peek32",
+                               prim_peek32, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, syscall_module, "poke16",
+                               prim_poke16, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mrb, syscall_module, "serial_ready?",
+                               prim_serial_ready, MRB_ARGS_NONE());
+    mrb_define_module_function(mrb, syscall_module, "serial_read_ready",
+                               prim_serial_read_ready, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mrb, syscall_module, "idle",
+                               prim_idle, MRB_ARGS_NONE());
     mrb_define_module_function(mrb, syscall_module, "poke32",
                                prim_poke32, MRB_ARGS_REQ(2));
     mrb_define_module_function(mrb, syscall_module, "read_bytes",

@@ -53,18 +53,31 @@ Encoding.list.each do |encoding|
   end
 end
 
-ENV["TERM"] = "dumb"
+# The far end of the serial port is a real terminal, and the kernel now
+# implements enough of one -- termios, window size, a line discipline -- for
+# Reline to drive it. TERM=dumb would make it give up before trying.
+ENV["TERM"] = "vt100"
+
+# There is one directory and no user database. Reline expands ~/.inputrc, and
+# without HOME set CRuby falls back to looking the user up by uid and fails.
+ENV["HOME"] = "/"
 begin
   require "irb"
   puts "irb #{IRB::VERSION} loaded"
 
-  # No pager to page into, no filesystem to save history on, and completion
-  # left off until the terminal is a terminal.
-  IRB.conf[:USE_PAGER] = false
-  IRB.conf[:SAVE_HISTORY] = nil
-  IRB.conf[:USE_AUTOCOMPLETE] = false
+  # IRB.start would do setup and run in one step, but setup resets the
+  # configuration from its defaults -- so anything set before it is discarded,
+  # which is why history saving kept running after being switched off. Doing
+  # the two halves separately leaves somewhere to put the settings.
+  IRB.setup(nil)
 
-  IRB.start
+  # No pager to page into, and no writable filesystem to save history on.
+  IRB.conf[:USE_PAGER] = false
+  IRB.conf[:SAVE_HISTORY] = false
+
+  irb = IRB::Irb.new
+  IRB.conf[:MAIN_CONTEXT] = irb.context
+  irb.run(IRB.conf)
   puts "irb finished"
 rescue Exception => e
   puts "irb failed: #{e.class}: #{e.message}"
