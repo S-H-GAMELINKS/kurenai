@@ -37,4 +37,8 @@ SECTIONS
     . = ALIGN(8);
     __bss64_end = .;
   }
+
+  /* Where the image stops and free RAM begins. kernel/memory.c hands out pages
+   * from here upwards. */
+  _end = .;
 }

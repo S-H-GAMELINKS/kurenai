@@ -284,9 +284,6 @@ ExternalProject_Add(picoruby
 )
 
 # ---------------------------------------------------------------- kernel
-# NOTE:
-# CRuby is not linked in yet; the kernel currently runs the PicoRuby VM and the
-# Ruby boot script only.
 set(KERNEL_DIR   ${CMAKE_BINARY_DIR}/kernel)
 set(KERNEL_ELF   ${KERNEL_DIR}/kernel.elf)
 set(KERNEL64_ELF ${KERNEL_DIR}/kernel64.elf)
@@ -294,7 +291,7 @@ set(KERNEL64_ELF ${KERNEL_DIR}/kernel64.elf)
 ExternalProject_Add(kernel
   SOURCE_DIR ${CMAKE_SOURCE_DIR}/kernel
   BINARY_DIR ${KERNEL_DIR}
-  DEPENDS musl picoruby
+  DEPENDS musl picoruby cruby_cross
 
   DOWNLOAD_COMMAND ""
   UPDATE_COMMAND   ""
@@ -314,6 +311,8 @@ ExternalProject_Add(kernel
     -DPICORBC=${PICORBC}
     -DPICORUBY_LIB=${PICORUBY_LIB}
     -DPICORUBY_INCLUDE_DIRS=${PICORUBY_INCLUDE_DIRS_ARG}
+    -DCRUBY_LIB=${CRUBY_LIB}
+    -DEMBED_SCRIPT=${DEPS_DIR}/embed_script.cmake
     -DCMAKE_BUILD_TYPE=Release
 
   BUILD_BYPRODUCTS ${KERNEL_ELF} ${KERNEL64_ELF}
@@ -417,7 +416,7 @@ if(QEMU_EXECUTABLE)
            -DKERNEL=${KERNEL_ELF}
            # Enough Ruby to show the VM is genuinely executing: a literal, a
            # block with an integer method, and string interpolation.
-           "-DEXPECT=boot ok|picoruby vm ok|sum 3"
+           "-DEXPECT=boot ok|tls ok|picoruby vm ok|sum 3|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376"
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial.log
            # The kernel halts instead of exiting, so QEMU always runs for the
            # full timeout. Booting takes well under a second here; the margin

@@ -68,16 +68,14 @@ mrb_task_disable_irq(void)
  *
  * Two symbols libmruby.a references but this configuration never reaches. */
 
-/* Prism lives in mruby-compiler2, which is not linked: the kernel runs
- * precompiled bytecode and has no Ruby source to parse. Adding compiler2 would
- * make eval possible at the cost of size and libc surface. */
-void *
-pm_constant_pool_id_to_constant(void *pool, unsigned int id)
-{
-    (void)pool;
-    (void)id;
-    return NULL;
-}
+/* NOTE:
+ * libmruby.a also leaves pm_constant_pool_id_to_constant undefined, from
+ * mruby-compiler2, which is not linked: the kernel runs precompiled bytecode
+ * and has no Ruby source for the mruby side to parse. No stub is defined for
+ * it here, because CRuby brings Prism and defines the real one; adding a stub
+ * as well is a duplicate symbol at link time. The reference from libmruby.a
+ * resolves to Prism's and is never taken.
+ */
 
 /* mruby-io's file_ext.c references this. The kernel routes IO through its own
  * console rather than file descriptors the VM knows about. */

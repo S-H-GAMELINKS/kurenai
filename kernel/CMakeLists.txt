@@ -18,7 +18,7 @@
 cmake_minimum_required(VERSION 3.25)
 project(picoruby_kernel LANGUAGES C ASM)
 
-foreach(v BOOT_DIR RUBY_DIR PICORBC PICORUBY_LIB PICORUBY_INCLUDE_DIRS MUSL_INSTALL)
+foreach(v BOOT_DIR RUBY_DIR PICORBC PICORUBY_LIB PICORUBY_INCLUDE_DIRS MUSL_INSTALL CRUBY_LIB)
   if(NOT ${v})
     message(FATAL_ERROR "kernel: -D${v}=... is required")
   endif()
@@ -37,6 +37,21 @@ add_custom_command(
   DEPENDS ${RUBY_DIR}/kernel/boot.rb ${PICORBC}
   COMMENT "Compiling ruby/kernel/boot.rb")
 
+# ---------------------------------------------------------------- Ruby -> string
+# The CRuby side has no bytecode compiler available at build time, and no
+# filesystem to read from at run time, so its script is embedded as source and
+# evaluated. A generated C file keeps the quoting in one place.
+set(USERLAND_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/userland_script.c)
+add_custom_command(
+  OUTPUT ${USERLAND_SCRIPT}
+  COMMAND ${CMAKE_COMMAND}
+          -DINPUT=${RUBY_DIR}/userland/init.rb
+          -DOUTPUT=${USERLAND_SCRIPT}
+          -DSYMBOL=userland_script
+          -P ${EMBED_SCRIPT}
+  DEPENDS ${RUBY_DIR}/userland/init.rb ${EMBED_SCRIPT}
+  COMMENT "Embedding ruby/userland/init.rb")
+
 # ---------------------------------------------------------------- 64-bit kernel
 add_executable(kernel64.elf
   entry64.S
@@ -45,7 +60,14 @@ add_executable(kernel64.elf
   vm.c
   hal.c
   syscall.c
-  ${BOOT_BYTECODE})
+  tls.c
+  timer.c
+  musl_stubs.c
+  memory.c
+  enc.c
+  cruby.c
+  ${BOOT_BYTECODE}
+  ${USERLAND_SCRIPT})
 
 target_include_directories(kernel64.elf PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
@@ -70,9 +92,28 @@ target_compile_definitions(kernel64.elf PRIVATE
 # musl's stdio still wants an allocator underneath it, and nothing in this
 # kernel provides one yet. The stripped flavour becomes the right choice when
 # CRuby arrives with its own.
+# NOTE:
+# The full musl, not the stripped flavour. Keeping musl's allocator is a
+# deliberate choice: a bump allocator that never reuses memory is adequate for
+# running a script once and fatal for a REPL, where every keystroke allocates.
+# mallocng frees properly, and the kernel only has to supply pages beneath it.
+#
+# compiler-rt supplies the 128-bit division helpers CRuby's bignum code calls.
+# Writing them by hand would be a needless reimplementation of the compiler's
+# own runtime.
+execute_process(COMMAND ${CMAKE_C_COMPILER} --rtlib=compiler-rt -print-libgcc-file-name
+                OUTPUT_VARIABLE COMPILER_RT_BUILTINS
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                COMMAND_ERROR_IS_FATAL ANY)
+if(NOT EXISTS ${COMPILER_RT_BUILTINS})
+  message(FATAL_ERROR "compiler-rt builtins not found at ${COMPILER_RT_BUILTINS}")
+endif()
+
 target_link_libraries(kernel64.elf PRIVATE
+  ${CRUBY_LIB}
   ${PICORUBY_LIB}
-  ${MUSL_INSTALL}/lib/libc.a)
+  ${MUSL_INSTALL}/lib/libc.a
+  ${COMPILER_RT_BUILTINS})
 
 target_link_options(kernel64.elf PRIVATE
   -nostdlib

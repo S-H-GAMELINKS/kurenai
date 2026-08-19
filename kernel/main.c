@@ -1,7 +1,9 @@
 /* Kernel entry.
  *
- * The C here does as little as it can: bring up the console, then hand control
- * to Ruby. What the kernel does on boot is written in ruby/kernel/boot.rb. */
+ * The order here is the dependency order, and each line prints so that a
+ * failure names the stage it happened in rather than showing up as silence.
+ * TLS comes before anything that might touch errno, which is nearly the first
+ * thing libc does. */
 
 #include "kernel.h"
 
@@ -11,7 +13,18 @@ kernel_main(void)
     serial_init();
     serial_puts("boot ok\n");
 
+    timer_init();
+    serial_puts("timer ok\n");
+
+    tls_init();
+    serial_puts("tls ok\n");
+
+    memory_init();
+    serial_puts("memory ok\n");
+
     vm_start();
 
-    serial_puts("kernel: boot.rb returned\n");
+    cruby_start();
+
+    serial_puts("kernel: done\n");
 }
