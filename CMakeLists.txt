@@ -314,6 +314,7 @@ ExternalProject_Add(kernel
     -DCRUBY_LIB=${CRUBY_LIB}
     -DEMBED_SCRIPT=${DEPS_DIR}/embed_script.cmake
     -DEMBED_FILES=${DEPS_DIR}/embed_files.cmake
+    -DCRUBY_SRC=${TP}/cruby
     -DCMAKE_BUILD_TYPE=Release
 
   BUILD_BYPRODUCTS ${KERNEL_ELF} ${KERNEL64_ELF}
@@ -421,7 +422,7 @@ if(QEMU_EXECUTABLE)
            # input. With no input the system sits at the prompt, which is
            # correct, so the summary printed after the REPL belongs to the
            # test that actually drives it.
-           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: class present"
+           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex"
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial.log
            # The kernel halts instead of exiting, so QEMU always runs for the
            # full timeout. Booting takes well under a second here; the margin

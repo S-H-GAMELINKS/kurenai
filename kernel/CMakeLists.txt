@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 3.25)
 project(picoruby_kernel LANGUAGES C ASM)
 
 foreach(v BOOT_DIR RUBY_DIR PICORBC PICORUBY_LIB PICORUBY_INCLUDE_DIRS MUSL_INSTALL
-          CRUBY_LIB EMBED_SCRIPT EMBED_FILES)
+          CRUBY_LIB CRUBY_SRC EMBED_SCRIPT EMBED_FILES)
   if(NOT ${v})
     message(FATAL_ERROR "kernel: -D${v}=... is required")
   endif()
@@ -59,18 +59,49 @@ add_custom_command(
   COMMENT "Compiling the kernel's Ruby")
 
 # ---------------------------------------------------------------- embedded files
-# The read-only filesystem, served by ruby/kernel/vfs.rb.
-set(EMBEDDED_FILES ${RUBY_DIR}/files/hello.rb)
-string(REPLACE ";" "|" EMBEDDED_FILES_ARG "${EMBEDDED_FILES}")
+# The read-only filesystem, served by ruby/kernel/vfs.rb. Entries pair the path
+# a file appears at with the file it comes from, so the layout CRuby sees is
+# stated here rather than following the source tree.
+#
+# Ruby libraries are served at the root, and ruby/userland/init.rb puts "/" on
+# the load path, so require works through the ordinary CRuby machinery: it
+# calls stat, open and read, and the Ruby kernel answers.
+set(EMBEDDED_ENTRIES "")
+set(EMBEDDED_SOURCES "")
+
+# Adds every listed file, keeping its path relative to root.
+function(embed_under root)
+  foreach(relative IN LISTS ARGN)
+    list(APPEND EMBEDDED_ENTRIES "/${relative}=${root}/${relative}")
+    list(APPEND EMBEDDED_SOURCES "${root}/${relative}")
+  endforeach()
+  set(EMBEDDED_ENTRIES "${EMBEDDED_ENTRIES}" PARENT_SCOPE)
+  set(EMBEDDED_SOURCES "${EMBEDDED_SOURCES}" PARENT_SCOPE)
+endfunction()
+
+embed_under(${RUBY_DIR}/files hello.rb)
+
+# Ripper's Ruby half. The C half is already linked in and registered as
+# ripper.so, which is what ripper/core.rb requires.
+embed_under(${CRUBY_SRC}/ext/ripper/lib
+  ripper.rb
+  ripper/core.rb
+  ripper/lexer.rb
+  ripper/filter.rb
+  ripper/sexp.rb)
+
+set(EMBEDDED_MANIFEST ${CMAKE_CURRENT_BINARY_DIR}/embedded_manifest.txt)
+string(REPLACE ";" "\n" EMBEDDED_MANIFEST_TEXT "${EMBEDDED_ENTRIES}")
+file(WRITE ${EMBEDDED_MANIFEST} "${EMBEDDED_MANIFEST_TEXT}\n")
 
 set(EMBEDDED_FILES_C ${CMAKE_CURRENT_BINARY_DIR}/embedded_files.c)
 add_custom_command(
   OUTPUT ${EMBEDDED_FILES_C}
   COMMAND ${CMAKE_COMMAND}
-          -DFILES=${EMBEDDED_FILES_ARG}
+          -DMANIFEST=${EMBEDDED_MANIFEST}
           -DOUTPUT=${EMBEDDED_FILES_C}
           -P ${EMBED_FILES}
-  DEPENDS ${EMBEDDED_FILES} ${EMBED_FILES}
+  DEPENDS ${EMBEDDED_SOURCES} ${EMBEDDED_MANIFEST} ${EMBED_FILES}
   COMMENT "Embedding the read-only filesystem")
 
 # ---------------------------------------------------------------- Ruby -> string

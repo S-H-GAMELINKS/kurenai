@@ -18,24 +18,60 @@ module Kernel
     # errno rather than as a boot failure.
     TABLE = {}
 
+    # Directories are not stored, they are implied: a file at /ripper/core.rb
+    # means /ripper exists. CRuby resolves a path component at a time and asks
+    # about each one, so the directories have to answer even though nothing
+    # ever lists them.
+    DIRECTORIES = { "/" => true }
+
     def self.build
       Syscall.embedded_files.each do |path, address, size|
         TABLE[path] = [address, size]
+
+        parts = path.split("/")
+        parts.pop                       # drop the file itself
+        prefix = ""
+        parts.each do |part|
+          next if part.empty?
+          prefix = prefix + "/" + part
+          DIRECTORIES[prefix] = true
+        end
       end
       TABLE
     end
 
+    def self.directory?(path)
+      DIRECTORIES[normalize(path)] == true
+    end
+
+    # CRuby builds paths by joining a load path entry with a file name, which
+    # produces things like "//ripper.rb" when the entry is "/". Collapsing
+    # repeated separators and resolving "." and ".." is the filesystem's job,
+    # not the caller's.
+    def self.normalize(path)
+      parts = []
+      path.split("/").each do |part|
+        next if part.empty? || part == "."
+        if part == ".."
+          parts.pop
+        else
+          parts.push(part)
+        end
+      end
+      "/" + parts.join("/")
+    end
+
     def self.exist?(path)
-      !TABLE[path].nil?
+      !TABLE[normalize(path)].nil?
     end
 
     def self.address(path)
-      entry = TABLE[path]
+      entry = TABLE[normalize(path)]
       entry && entry[0]
     end
 
     def self.size(path)
-      entry = TABLE[path]
+      entry = TABLE[normalize(path)]
       entry && entry[1]
     end
 

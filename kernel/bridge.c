@@ -200,6 +200,19 @@ prim_write_bytes(mrb_state *mrb, mrb_value self)
     return mrb_int_value(mrb, len);
 }
 
+/* Pages for an anonymous mapping. The arena is identity mapped already, so
+ * this only has to choose an address. */
+static mrb_value
+prim_alloc_pages(mrb_state *mrb, mrb_value self)
+{
+    mrb_int length;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &length);
+    void *p = memory_alloc_pages((size_t)length);
+    return mrb_int_value(mrb, (mrb_int)(uintptr_t)p);
+}
+
 static mrb_value
 prim_clock_millis(mrb_state *mrb, mrb_value self)
 {
@@ -256,6 +269,8 @@ bridge_init(mrb_state *mrb)
                                prim_cstring, MRB_ARGS_REQ(1));
     mrb_define_module_function(mrb, syscall_module, "embedded_files",
                                prim_embedded_files, MRB_ARGS_NONE());
+    mrb_define_module_function(mrb, syscall_module, "alloc_pages",
+                               prim_alloc_pages, MRB_ARGS_REQ(1));
     mrb_define_module_function(mrb, syscall_module, "poke32",
                                prim_poke32, MRB_ARGS_REQ(2));
     mrb_define_module_function(mrb, syscall_module, "read_bytes",

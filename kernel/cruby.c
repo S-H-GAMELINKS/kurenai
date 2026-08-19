@@ -83,6 +83,8 @@ cruby_start(void)
     Init_builtin_features();
 
     ruby_script("picoruby-kernel");
+
+
     serial_puts("cruby init ok\n");
 
     int state = 0;

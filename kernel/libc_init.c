@@ -6,7 +6,7 @@
  * program. So the same ground has to be covered by hand, and anything missed
  * shows up much later as libc reading through a pointer nobody set.
  *
- * Both of the things done here were found that way. */
+ * Everything done here was found that way. */
 
 #include <stddef.h>
 #include <stdint.h>
@@ -17,16 +17,22 @@
 
 /* ---------------------------------------------------------------- TLS
  *
- * musl reaches errno through the thread pointer: __errno_location() returns a
- * field of the pthread struct that FS points at. There is one thread, so one
- * statically allocated block is enough, and musl only requires that the
- * pointer's first field points at itself. The rest stays zero, which is the
- * state a single-threaded program with no cancellation wants anyway.
+ * musl reaches errno through the thread pointer, and rather more besides: the
+ * per-thread locale, which strerror uses, and the robust mutex list. Setting
+ * the self-pointer by hand covers errno and leaves the rest null, which shows
+ * up later as a fault inside strerror while building an exception message.
+ *
+ * So musl's own __init_tp does it instead. Reaching for a library's internal
+ * initialiser is not obviously right, but the alternative is hand-computing
+ * offsets into struct pthread and keeping them in step with a musl the build
+ * pins anyway. It calls __set_thread_area, which kernel/musl_stubs.c provides.
  *
  * On x86_64 the TLS block sits below the thread pointer, at negative offsets,
  * and the pthread struct sits at the pointer itself. Putting the pointer in
  * the middle leaves room on both sides without having to know either size. */
 static unsigned char tls_block[8192] __attribute__((aligned(4096)));
+
+int __init_tp(void *thread_pointer);
 
 /* ---------------------------------------------------------------- auxv
  *
@@ -65,17 +71,16 @@ static size_t auxv[] = {
 void
 libc_init(void)
 {
-    void *tp = tls_block + sizeof(tls_block) / 2;
+    /* Sets the self-pointer, the locale, the robust list and the thread id,
+     * and installs the thread pointer through __set_thread_area. */
+    if (__init_tp(tls_block + sizeof(tls_block) / 2) != 0)
+        serial_puts("libc: __init_tp failed\n");
 
-    /* musl's __pthread_self() reads this self-pointer. */
-    *(void **)tp = tp;
-
-    uint64_t address = (uint64_t)(uintptr_t)tp;
-    __asm__ volatile ("wrmsr"
-                      :
-                      : "c"(IA32_FS_BASE),
-                        "a"((uint32_t)(address & 0xFFFFFFFFu)),
-                        "d"((uint32_t)(address >> 32)));
+    /* __init_tp concludes that threads are available, because installing the
+     * thread pointer succeeded. They are not: there is one CPU, no scheduler,
+     * and no TLS image for a second thread to be given a copy of. Left set,
+     * CRuby starts its timer thread and faults inside __copy_tls. */
+    __libc.can_do_threads = 0;
 
     /* Not unpredictable, and not claimed to be: the timer is all there is this
      * early. It is enough for the allocator, which only wants the bytes to

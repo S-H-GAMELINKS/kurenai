@@ -1,40 +1,52 @@
-# cmake -DFILES=<a|b|c> -DOUTPUT=<file.c> -P embed_files.cmake
+# cmake -DMANIFEST=<file> -DOUTPUT=<file.c> -P embed_files.cmake
 #
-# Builds the read-only filesystem into the image. Each file becomes a byte
-# array, and a table maps the path it is served under to its address and size.
-# ruby/kernel/vfs.rb reads that table at boot and serves from it.
+# Builds the read-only filesystem into the image. The manifest holds one
+# "/served/path=source/file" per line, so the layout the kernel presents is
+# decided by whoever lists the files rather than by where they happen to live
+# in the source tree.
 #
-# Files are served at "/" plus their basename. The kernel has no directories,
-# and inventing a hierarchy that nothing creates would be pretending.
+# A file rather than a command-line list: CMake does not escape shell
+# metacharacters in custom command arguments, and any separator that survives
+# a path is one the shell has an opinion about.
+#
+# ruby/kernel/vfs.rb reads the resulting table at boot and serves from it.
 
 cmake_minimum_required(VERSION 3.25)
 
-foreach(v FILES OUTPUT)
+foreach(v MANIFEST OUTPUT)
   if(NOT DEFINED ${v})
     message(FATAL_ERROR "embed_files.cmake: -D${v}=... is required")
   endif()
 endforeach()
+if(NOT EXISTS "${MANIFEST}")
+  message(FATAL_ERROR "embed_files.cmake: no such manifest: ${MANIFEST}")
+endif()
 
-string(REPLACE "|" ";" file_list "${FILES}")
+file(STRINGS "${MANIFEST}" entry_list)
 
 set(arrays "")
-set(entries "")
+set(table "")
 set(index 0)
-foreach(path IN LISTS file_list)
-  if(NOT EXISTS "${path}")
-    message(FATAL_ERROR "embed_files.cmake: no such file: ${path}")
+foreach(entry IN LISTS entry_list)
+  if(NOT entry MATCHES "^([^=]+)=(.+)$")
+    message(FATAL_ERROR "embed_files.cmake: malformed entry: ${entry}")
   endif()
-  get_filename_component(name "${path}" NAME)
+  set(vpath "${CMAKE_MATCH_1}")
+  set(source "${CMAKE_MATCH_2}")
 
-  file(READ "${path}" hex HEX)
+  if(NOT EXISTS "${source}")
+    message(FATAL_ERROR "embed_files.cmake: no such file: ${source}")
+  endif()
+
+  file(READ "${source}" hex HEX)
   string(REGEX REPLACE "(..)" "0x\\1," bytes "${hex}")
   string(LENGTH "${hex}" hexlen)
   math(EXPR size "${hexlen} / 2")
 
   string(APPEND arrays
     "static const unsigned char file_${index}[] = {${bytes}};\n")
-  string(APPEND entries
-    "    { \"/${name}\", file_${index}, ${size} },\n")
+  string(APPEND table
+    "    { \"${vpath}\", file_${index}, ${size} },\n")
   math(EXPR index "${index} + 1")
 endforeach()
 
@@ -48,7 +60,7 @@ file(WRITE "${OUTPUT}"
   "    size_t               size;\n"
   "};\n\n"
   "const struct embedded_file embedded_files[] = {\n"
-  "${entries}"
+  "${table}"
   "};\n\n"
   "const size_t embedded_file_count =\n"
   "    sizeof(embedded_files) / sizeof(embedded_files[0]);\n")

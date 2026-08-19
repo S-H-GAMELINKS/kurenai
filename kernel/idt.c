@@ -142,6 +142,27 @@ fault_report(struct fault_frame *frame)
     serial_puts("  rbp "); put_hex(frame->rbp);
     serial_putc('\n');
 
+    /* A crude backtrace: scan the stack for values that land inside the
+     * kernel's text and print them. Compiled without frame pointers there is
+     * no chain to walk, and this finds the return addresses anyway, along with
+     * some noise. Resolve them with llvm-nm against kernel64.elf. */
+    extern char _etext_marker[] __asm__("etext");
+    uintptr_t text_start = 0x200000;
+    uintptr_t text_end = (uintptr_t)_etext_marker;
+    const uint64_t *stack = (const uint64_t *)(uintptr_t)frame->rsp;
+
+    serial_puts("  stack:");
+    int printed = 0;
+    for (int i = 0; i < 128 && printed < 12; i++) {
+        uint64_t value = stack[i];
+        if (value >= text_start && value < text_end) {
+            serial_puts(" ");
+            put_hex(value);
+            printed++;
+        }
+    }
+    serial_putc('\n');
+
     serial_puts("--- halted\n");
 }
 

@@ -22,6 +22,8 @@ module Kernel
     NR_LSTAT     = 6
     NR_NEWFSTATAT = 262
     NR_LSEEK     = 8
+    NR_MMAP      = 9
+    NR_MUNMAP    = 11
     NR_PIPE      = 22
     NR_WRITEV    = 20
     NR_PIPE2     = 293
@@ -47,6 +49,7 @@ module Kernel
     STAT_BLKSIZE    = 56
 
     S_IFREG  = 0o100000
+    S_IFDIR  = 0o040000
     S_IFCHR  = 0o020000
     S_IFIFO  = 0o010000
 
@@ -65,6 +68,8 @@ module Kernel
       when NR_NEWFSTATAT     then sys_stat(a2, a3)
       when NR_LSEEK  then sys_lseek(a1, a2, a3)
       when NR_PIPE, NR_PIPE2 then sys_pipe(a1)
+      when NR_MMAP   then sys_mmap(a2, a5, a6)
+      when NR_MUNMAP then 0
       else ENOSYS
       end
     end
@@ -215,6 +220,14 @@ module Kernel
       return EFAULT if address == 0
 
       path = cstring(path_address)
+
+      if VFS.directory?(path)
+        memzero(address, STAT_SIZE)
+        poke64(address + STAT_MODE, S_IFDIR | 0o555)
+        poke64(address + STAT_BLKSIZE, 1024)
+        return 0
+      end
+
       size = VFS.size(path)
       return ENOENT if size.nil?
 
@@ -223,6 +236,32 @@ module Kernel
       poke64(address + STAT_ST_SIZE, size)
       poke64(address + STAT_BLKSIZE, 1024)
       0
+    end
+
+    # ---------------------------------------------------------------- memory
+
+    ENOMEM = -12
+
+    # Anonymous mappings get fresh pages. File mappings are answered with the
+    # address the file already occupies: the filesystem lives in the image, in
+    # read-only memory, so a read-only private mapping of it is exactly that
+    # memory. Nothing is copied.
+    #
+    # This path matters more than it looks. Prism reads source files by mapping
+    # them, not by reading them, so require goes through here rather than
+    # through sys_read -- which is why a mmap that ignored the descriptor made
+    # every required file look empty while still appearing to load.
+    def self.sys_mmap(length, fd, offset)
+      if fd < 0
+        page = alloc_pages(length)
+        return page == 0 ? ENOMEM : page
+      end
+
+      file = FD.entry(fd)
+      return ENOMEM if file.nil? || file[:pipe]
+      return ENOMEM if offset + length > file[:size] + 4096
+
+      file[:address] + offset
     end
 
     # ---------------------------------------------------------------- support

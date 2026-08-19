@@ -50,6 +50,8 @@ kernel_main(void)
     bridge_route(8   /* SYS_lseek  */);
     bridge_route(22  /* SYS_pipe   */);
     bridge_route(293 /* SYS_pipe2  */);
+    bridge_route(9   /* SYS_mmap   */);
+    bridge_route(11  /* SYS_munmap */);
     serial_puts("syscall routing ok\n");
 
     cruby_start();

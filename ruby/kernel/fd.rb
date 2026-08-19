@@ -29,7 +29,7 @@ module Kernel
       return nil unless number
 
       TABLE[number] = {
-        path: path,
+        path: VFS.normalize(path),
         address: address,
         size: VFS.size(path),
         offset: 0

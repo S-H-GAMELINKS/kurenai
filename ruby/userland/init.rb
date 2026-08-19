@@ -1,11 +1,16 @@
 # The first Ruby that runs on top of CRuby.
 #
-# Embedded in the image as a string and evaluated at boot. There is no
-# filesystem CRuby can require from yet, so this is how userland code gets in.
+# Embedded in the image as a string and evaluated at boot, because there is
+# nothing to require it from until the load path below is set up.
 
 # Nothing here is a terminal as far as the kernel is concerned, so CRuby block
 # buffers its output. A prompt that appears after the answer is not a prompt.
 STDOUT.sync = true
+
+# The kernel serves Ruby libraries at the root, so putting "/" on the load path
+# is all require needs. Nothing is monkey-patched: CRuby's own require calls
+# stat, open, mmap and read, and the Ruby kernel answers.
+$LOAD_PATH.unshift("/")
 
 puts "cruby #{RUBY_VERSION} on picoruby-kernel"
 puts "1 + 1 = #{1 + 1}"
@@ -24,18 +29,13 @@ puts [3, 1, 2].sort.inspect
 puts File.read("/hello.rb")
 puts "read #{File.size("/hello.rb")} bytes from the Ruby VFS"
 
-# The two extensions irb depends on, linked into the image and registered by
-# Init_ext rather than loaded from disk. Checking them here rather than
-# discovering it inside irb, where the failure would be much harder to read.
+# The two extensions irb depends on. io/console is linked in and registered by
+# Init_ext. ripper needs its Ruby half too, and that comes through require from
+# the VFS -- which is the same road irb and reline will travel.
 require "io/console"
 require "ripper"
 puts "io/console: IO#raw #{IO.method_defined?(:raw)}"
-# The C half of Ripper is linked in and registered. Its Ruby half --
-# Ripper.lex, Ripper::Lexer, Ripper.sexp -- lives in ext/ripper/lib and is not
-# embedded yet, so those are still missing. irb's RubyLex needs them, which
-# makes a working require the next thing to build.
-puts "ripper: #{defined?(Ripper) ? "class present" : "missing"}, " \
-     "Ripper.lex #{Ripper.respond_to?(:lex) ? "available" : "not embedded yet"}"
+puts "ripper: #{Ripper.lex("1 + 1").length} tokens from Ripper.lex"
 
 # ---------------------------------------------------------------- the REPL
 #
