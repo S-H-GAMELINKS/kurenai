@@ -28,6 +28,7 @@ find_program(CMAKE_C_COMPILER clang REQUIRED)
 find_program(CMAKE_ASM_COMPILER clang REQUIRED)
 find_program(CMAKE_AR llvm-ar REQUIRED)
 find_program(CMAKE_RANLIB llvm-ranlib REQUIRED)
+find_program(CMAKE_OBJCOPY llvm-objcopy REQUIRED)
 
 # clang's own headers (stddef.h, stdarg.h and friends) still belong on the
 # include path under -nostdinc; only the C library headers change.

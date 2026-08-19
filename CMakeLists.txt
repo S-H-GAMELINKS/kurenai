@@ -28,6 +28,9 @@ find_program(LLVM_OBJDUMP_EXECUTABLE llvm-objdump REQUIRED)
 find_program(MAKE_EXECUTABLE make REQUIRED)
 find_program(RAKE_EXECUTABLE rake REQUIRED)  # PicoRuby and mruby build with rake
 find_program(RUBY_EXECUTABLE ruby REQUIRED)  # BASERUBY for CRuby's code generators
+# Optional: only the run target and the boot test need it, and neither is worth
+# blocking a build over.
+find_program(QEMU_EXECUTABLE qemu-system-x86_64)
 find_program(AUTORECONF_EXECUTABLE autoreconf REQUIRED)  # CRuby ships no configure
 
 # NOTE:
@@ -273,6 +276,51 @@ ExternalProject_Add(picoruby
   STEP_TARGETS download patch configure build install
 )
 
+# ---------------------------------------------------------------- kernel
+# NOTE:
+# At this milestone the kernel depends on none of the libraries yet; it only
+# has to reach long mode with a working console. The dependencies are added as
+# it starts using them.
+set(KERNEL_DIR   ${CMAKE_BINARY_DIR}/kernel)
+set(KERNEL_ELF   ${KERNEL_DIR}/kernel.elf)
+set(KERNEL64_ELF ${KERNEL_DIR}/kernel64.elf)
+
+ExternalProject_Add(kernel
+  SOURCE_DIR ${CMAKE_SOURCE_DIR}/kernel
+  BINARY_DIR ${KERNEL_DIR}
+
+  DOWNLOAD_COMMAND ""
+  UPDATE_COMMAND   ""
+  INSTALL_COMMAND  ""
+
+  CMAKE_ARGS
+    -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchain-x86_64-bare-metal.cmake
+    -DMUSL_INSTALL=${TP}/musl/install
+    -DBOOT_DIR=${CMAKE_SOURCE_DIR}/boot
+    -DCMAKE_BUILD_TYPE=Release
+
+  BUILD_BYPRODUCTS ${KERNEL_ELF} ${KERNEL64_ELF}
+  BUILD_ALWAYS ON
+
+  USES_TERMINAL_CONFIGURE ON
+  USES_TERMINAL_BUILD     ON
+  STEP_TARGETS configure build
+)
+
+# Boot it. Serial goes to stdio so the console is the terminal running this.
+if(QEMU_EXECUTABLE)
+  add_custom_target(run
+    COMMAND ${QEMU_EXECUTABLE}
+            -kernel ${KERNEL_ELF}
+            -m 512M
+            -serial stdio
+            -display none
+            -no-reboot
+    DEPENDS kernel
+    USES_TERMINAL
+    COMMENT "Booting the kernel in QEMU")
+endif()
+
 # ---------------------------------------------------------------- verify for dev dependencies
 # NOTE:
 # These check the files that are the *reason* the dependency is here, not just
@@ -339,6 +387,25 @@ add_test(NAME verify_cruby_cross COMMAND ${CMAKE_COMMAND}
          -DLIBC=${TP}/musl/install/lib/libc.a
          -DLLVM_NM=${LLVM_NM_EXECUTABLE}
          -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/cruby_cross.cmake)
+
+add_files_exist_test(verify_build_kernel ${KERNEL_ELF} ${KERNEL64_ELF})
+
+add_test(NAME verify_kernel_no_syscall_insn COMMAND ${CMAKE_COMMAND}
+         -DELF=${KERNEL64_ELF} -DLLVM_OBJDUMP=${LLVM_OBJDUMP_EXECUTABLE}
+         -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/no_syscall_insn.cmake)
+
+if(QEMU_EXECUTABLE)
+  add_test(NAME verify_kernel_boots COMMAND ${CMAKE_COMMAND}
+           -DQEMU=${QEMU_EXECUTABLE}
+           -DKERNEL=${KERNEL_ELF}
+           -DEXPECT=boot\ ok
+           -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial.log
+           # The kernel halts instead of exiting, so QEMU always runs for the
+           # full timeout. Booting takes well under a second here; the margin
+           # is for slower machines, and grows as the kernel does more.
+           -DSECONDS=5
+           -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/boot_serial.cmake)
+endif()
 
 add_files_exist_test(verify_clone_picoruby
   ${TP}/picoruby/build_config/picorbc.rb
