@@ -34,6 +34,10 @@ void   memory_init(void);
 void  *memory_alloc_pages(size_t length);
 size_t memory_used(void);
 size_t memory_available(void);
+void   serial_report_memory(void);
+
+/* Decimal, for the few places the kernel has to print a number. */
+void serial_put_uint(uint64_t value);
 
 /* The PicoRuby VM. It stays open for the life of the system, because the
  * syscall dispatcher runs in it. */

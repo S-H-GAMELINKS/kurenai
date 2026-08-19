@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 3.25)
 project(picoruby_kernel LANGUAGES C ASM)
 
 foreach(v BOOT_DIR RUBY_DIR PICORBC PICORUBY_LIB PICORUBY_INCLUDE_DIRS MUSL_INSTALL
-          CRUBY_LIB CRUBY_SRC EMBED_SCRIPT EMBED_FILES)
+          CRUBY_LIB CRUBY_SRC GEMS_DIR EMBED_SCRIPT EMBED_FILES)
   if(NOT ${v})
     message(FATAL_ERROR "kernel: -D${v}=... is required")
   endif()
@@ -32,6 +32,10 @@ find_program(LLD_EXECUTABLE ld.lld REQUIRED)
 # system uses, but it is the only way to see what CRuby is asking for and what
 # the Ruby kernel answered.
 option(BRIDGE_TRACE "Trace syscalls routed to Ruby" OFF)
+
+# Prints the size of every page allocation. Useful when something exhausts the
+# arena, which is how CRuby's 384MB heap reservation was found.
+option(MEMORY_TRACE "Trace page allocations" OFF)
 
 # ---------------------------------------------------------------- Ruby -> C
 # picorbc emits the bytecode as a C array directly, so no separate embedding
@@ -79,7 +83,7 @@ function(embed_under root)
   set(EMBEDDED_SOURCES "${EMBEDDED_SOURCES}" PARENT_SCOPE)
 endfunction()
 
-embed_under(${RUBY_DIR}/files hello.rb)
+embed_under(${RUBY_DIR}/files hello.rb rbconfig.rb)
 
 # Ripper's Ruby half. The C half is already linked in and registered as
 # ripper.so, which is what ripper/core.rb requires.
@@ -89,6 +93,56 @@ embed_under(${CRUBY_SRC}/ext/ripper/lib
   ripper/lexer.rb
   ripper/filter.rb
   ripper/sexp.rb)
+
+# NOTE:
+# Everything a gem or the standard library ships, found by globbing rather than
+# listed. The argument against globs elsewhere is that a source list should say
+# what the build compiles; here the right set is "whatever this version ships",
+# the versions are pinned, and listing 90 files by hand would only be a way to
+# get it wrong.
+function(embed_all_ruby_under root)
+  file(GLOB_RECURSE found RELATIVE ${root} ${root}/*.rb)
+  list(SORT found)
+  embed_under(${root} ${found})
+  set(EMBEDDED_ENTRIES "${EMBEDDED_ENTRIES}" PARENT_SCOPE)
+  set(EMBEDDED_SOURCES "${EMBEDDED_SOURCES}" PARENT_SCOPE)
+endfunction()
+
+# irb and reline whole, and the parts of the standard library they reach for.
+#
+# The standard library is filtered rather than embedded entire. Most of what
+# CRuby ships exists to talk to a network, a package index or a filesystem this
+# machine does not have, and it is a third of the image. What is left is what
+# irb and reline actually require.
+function(embed_ruby_under root)
+  cmake_parse_arguments(A "" "" "EXCLUDE" ${ARGN})
+  file(GLOB_RECURSE found RELATIVE ${root} ${root}/*.rb)
+  list(SORT found)
+  foreach(pattern IN LISTS A_EXCLUDE)
+    list(FILTER found EXCLUDE REGEX "${pattern}")
+  endforeach()
+  embed_under(${root} ${found})
+  set(EMBEDDED_ENTRIES "${EMBEDDED_ENTRIES}" PARENT_SCOPE)
+  set(EMBEDDED_SOURCES "${EMBEDDED_SOURCES}" PARENT_SCOPE)
+endfunction()
+
+embed_ruby_under(${GEMS_DIR}/irb/lib)
+embed_ruby_under(${GEMS_DIR}/reline/lib)
+embed_ruby_under(${CRUBY_SRC}/lib EXCLUDE
+  "^bundler"      # a package manager, with no packages and no network
+  "^rubygems"     # likewise
+  "^net/"         # no network stack
+  "^uri/"
+  "^resolv"
+  "^open-uri"
+  "^yaml"         # psych is a C extension that is not linked
+  "^mkmf"         # builds extensions; there is no compiler here
+  "^un\\.rb"
+  "^cgi"
+  "^erb"
+  "^ipaddr"
+  "^find\\.rb"
+  "^open3")
 
 set(EMBEDDED_MANIFEST ${CMAKE_CURRENT_BINARY_DIR}/embedded_manifest.txt)
 string(REPLACE ";" "\n" EMBEDDED_MANIFEST_TEXT "${EMBEDDED_ENTRIES}")
@@ -153,6 +207,9 @@ target_include_directories(kernel64.elf PRIVATE
 # static assertion so the next mismatch is a compile error instead.
 if(BRIDGE_TRACE)
   target_compile_definitions(kernel64.elf PRIVATE BRIDGE_TRACE)
+endif()
+if(MEMORY_TRACE)
+  target_compile_definitions(kernel64.elf PRIVATE MEMORY_TRACE)
 endif()
 
 target_compile_definitions(kernel64.elf PRIVATE

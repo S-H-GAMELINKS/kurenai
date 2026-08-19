@@ -8,6 +8,11 @@
 .code64
 .global _start64
 _start64:
+    /* The boot stub passes the bootloader's information structure in rdi. Save
+     * it before anything else can use the register; kernel/memory.c reads the
+     * memory size from it. */
+    mov %rdi, boot_info_pointer(%rip)
+
     /* The bootloader zeroes nothing above 2MB. */
     mov $__bss64_start, %rdi
     mov $__bss64_end, %rcx
@@ -40,6 +45,12 @@ _start64:
 1:  cli
     hlt
     jmp 1b
+
+.section .data
+.balign 8
+.global boot_info_pointer
+boot_info_pointer:
+    .quad 0
 
 .section .rodata
 .balign 4

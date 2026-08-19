@@ -15,4 +15,4 @@ puts [1, 2, 3].map { |n| n * n }.inspect
 # Build the filesystem table, then show what it holds. Doing this here rather
 # than on first use keeps a failure at boot, where it is visible.
 Kernel::VFS.build
-puts "vfs: #{Kernel::VFS.paths.inspect}"
+puts "vfs: #{Kernel::VFS.paths.length} files"

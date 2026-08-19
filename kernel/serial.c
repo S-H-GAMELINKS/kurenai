@@ -94,3 +94,17 @@ serial_read(char *buf, size_t len)
         buf[i++] = (char)inb(COM1 + COM_DATA);
     return i;
 }
+
+void
+serial_put_uint(uint64_t value)
+{
+    char digits[24];
+    int i = 0;
+
+    if (value == 0) digits[i++] = '0';
+    while (value > 0 && i < (int)sizeof(digits)) {
+        digits[i++] = (char)('0' + (value % 10));
+        value /= 10;
+    }
+    while (i-- > 0) serial_putc(digits[i]);
+}

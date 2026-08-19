@@ -17,10 +17,24 @@
 /* Placed by the linker script at the end of the image. */
 extern char _end[];
 
-/* The boot stub identity maps the low 512MB. Stop short of the top to leave
- * room for anything that has to live at a fixed high address later. */
-#define ARENA_LIMIT 0x1C000000UL   /* 448MB */
+/* The boot stub identity maps the low 4GB, but only what the machine actually
+ * has can be handed out. */
+#define MAPPED_LIMIT 0x100000000UL
 
+/* Saved by kernel/entry64.S from what the boot stub passed in rdi. Multiboot's
+ * information structure begins with flags, then the low and high memory sizes
+ * in kilobytes. */
+extern uint64_t boot_info_pointer;
+
+struct multiboot_info {
+    uint32_t flags;
+    uint32_t mem_lower;   /* KB below 1MB */
+    uint32_t mem_upper;   /* KB above 1MB */
+};
+
+#define MULTIBOOT_FLAG_MEMORY 0x01
+
+static uintptr_t arena_start;
 static uintptr_t arena_next;
 static uintptr_t arena_end;
 
@@ -29,17 +43,46 @@ memory_init(void)
 {
     /* Start on a 2MB boundary past the image, which keeps the arena clear of
      * the kernel's own BSS however large that grows. */
-    uintptr_t start = ((uintptr_t)_end + 0x1FFFFF) & ~(uintptr_t)0x1FFFFF;
-    arena_next = start;
-    arena_end = ARENA_LIMIT;
+    arena_start = ((uintptr_t)_end + 0x1FFFFF) & ~(uintptr_t)0x1FFFFF;
+    arena_next = arena_start;
+
+    /* Ask the bootloader how much memory there is rather than assuming. The
+     * amount matters: CRuby's garbage collector reserves its heap in one
+     * mapping, and this kernel cannot reserve address space without also
+     * committing the memory behind it. */
+    arena_end = 0x20000000UL;   /* 512MB, if nothing better is known */
+
+    const struct multiboot_info *info =
+        (const struct multiboot_info *)(uintptr_t)boot_info_pointer;
+    if (info && (info->flags & MULTIBOOT_FLAG_MEMORY)) {
+        uint64_t top = 0x100000UL + (uint64_t)info->mem_upper * 1024UL;
+        if (top > MAPPED_LIMIT) top = MAPPED_LIMIT;
+        /* Leave the last 2MB alone; nothing should be handed the very top. */
+        if (top > 0x200000UL) arena_end = (uintptr_t)(top - 0x200000UL);
+    }
 }
 
 void *
 memory_alloc_pages(size_t length)
 {
     size_t aligned = (length + 0xFFF) & ~(size_t)0xFFF;
-    if (aligned == 0 || aligned > arena_end - arena_next) return 0;
+    if (aligned == 0 || aligned > arena_end - arena_next) {
+        /* Running out here is not a condition the caller can do anything
+         * about, and the message it would print needs an allocation of its
+         * own. Say so directly. */
+        serial_puts("memory: cannot serve ");
+        serial_put_uint(aligned);
+        serial_puts(" bytes, ");
+        serial_put_uint(arena_end - arena_next);
+        serial_puts(" left\n");
+        return 0;
+    }
 
+#ifdef MEMORY_TRACE
+    serial_puts("mmap ");
+    serial_put_uint(aligned);
+    serial_putc('\n');
+#endif
     void *p = (void *)arena_next;
     arena_next += aligned;
 
@@ -51,11 +94,21 @@ memory_alloc_pages(size_t length)
 size_t
 memory_used(void)
 {
-    return (size_t)(arena_next - (((uintptr_t)_end + 0x1FFFFF) & ~(uintptr_t)0x1FFFFF));
+    return (size_t)(arena_next - arena_start);
 }
 
 size_t
 memory_available(void)
 {
     return (size_t)(arena_end - arena_next);
+}
+
+/* Reported at boot, because "how much is there" is the first question asked
+ * when an allocation fails and the last one anyone can answer afterwards. */
+void
+serial_report_memory(void)
+{
+    serial_puts("memory: arena ");
+    serial_put_uint(memory_available() / (1024 * 1024));
+    serial_puts(" MB free\n");
 }

@@ -25,6 +25,7 @@ kernel_main(void)
 
     memory_init();
     serial_puts("memory ok\n");
+    serial_report_memory();
 
     vm_start();
     if (!vm_state()) {
@@ -47,6 +48,10 @@ kernel_main(void)
     bridge_route(4   /* SYS_stat   */);
     bridge_route(6   /* SYS_lstat  */);
     bridge_route(262 /* SYS_newfstatat */);
+    bridge_route(79  /* SYS_getcwd     */);
+    bridge_route(21  /* SYS_access     */);
+    bridge_route(269 /* SYS_faccessat  */);
+    bridge_route(439 /* SYS_faccessat2 */);
     bridge_route(8   /* SYS_lseek  */);
     bridge_route(22  /* SYS_pipe   */);
     bridge_route(293 /* SYS_pipe2  */);

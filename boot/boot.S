@@ -28,11 +28,28 @@ stack_top:
 .align 4096
 pml4:    .skip 4096
 pdpt:    .skip 4096
-pd:      .skip 4096
+/* Four page directories, 512 entries of 2MB each: 4GB identity mapped. CRuby's
+ * garbage collector reserves its heap address space in one large mapping, and
+ * the kernel has no way to hand out address space without also handing out the
+ * memory behind it, so the map has to be large enough to absorb that. */
+pd:      .skip 16384         /* four directories, 4KB each */
+
+
 /* The first 2MB is described by 4KB pages instead of one large page, so that
  * the page at address zero can be left out. Everything above it, including
  * this stub and the GDT, stays mapped. */
 pt0:     .skip 4096
+
+/* Where the bootloader's information structure is, saved before the registers
+ * holding it are reused. It is handed to the 64-bit kernel in rdi, which is
+ * the only way across: the two halves are separate binaries and share no
+ * symbols.
+ *
+ * In .data rather than .bss, because it is written before BSS is cleared. */
+.section .data
+.balign 4
+multiboot_info_pointer:
+    .long 0
 
 .section .rodata
 .align 16
@@ -52,6 +69,9 @@ _start:
     cli
     mov $stack_top, %esp
 
+    /* Multiboot leaves the information structure address in ebx. */
+    mov %ebx, (multiboot_info_pointer)
+
     /* The bootloader does not zero BSS. */
     mov $__bss_start, %edi
     mov $__bss_end, %ecx
@@ -67,14 +87,22 @@ _start:
     or $0x03, %eax              /* present | writable */
     mov %eax, (pml4)
 
+    /* Four directory entries, one per gigabyte. */
+    mov $pdpt, %edi
     mov $pd, %eax
     or $0x03, %eax
-    mov %eax, (pdpt)
+    mov $4, %ecx
+3:  mov %eax, (%edi)
+    movl $0, 4(%edi)
+    add $4096, %eax             /* next page directory */
+    add $8, %edi
+    dec %ecx
+    jnz 3b
 
     mov $pd, %edi
     mov $0x83, %eax             /* present | writable | page size (2MB) */
     xor %edx, %edx
-    mov $256, %ecx
+    mov $2048, %ecx             /* 2048 * 2MB = 4GB */
 1:  mov %eax, (%edi)
     mov %edx, 4(%edi)
     add $0x200000, %eax
@@ -141,6 +169,10 @@ long_mode_entry:
     mov %ax, %fs
     mov %ax, %gs
     mov %ax, %ss
+
+    /* First argument to the 64-bit entry point. */
+    xor %rdi, %rdi
+    mov (multiboot_info_pointer), %edi
 
     mov $0x200000, %rax
     jmp *%rax

@@ -21,6 +21,10 @@ module Kernel
     NR_FSTAT     = 5
     NR_LSTAT     = 6
     NR_NEWFSTATAT = 262
+    NR_GETCWD     = 79
+    NR_ACCESS     = 21
+    NR_FACCESSAT  = 269
+    NR_FACCESSAT2 = 439
     NR_LSEEK     = 8
     NR_MMAP      = 9
     NR_MUNMAP    = 11
@@ -66,6 +70,9 @@ module Kernel
       when NR_FSTAT  then sys_fstat(a1, a2)
       when NR_STAT, NR_LSTAT then sys_stat(a1, a2)
       when NR_NEWFSTATAT     then sys_stat(a2, a3)
+      when NR_GETCWD         then sys_getcwd(a1, a2)
+      when NR_ACCESS         then sys_access(a1)
+      when NR_FACCESSAT, NR_FACCESSAT2 then sys_access(a2)
       when NR_LSEEK  then sys_lseek(a1, a2, a3)
       when NR_PIPE, NR_PIPE2 then sys_pipe(a1)
       when NR_MMAP   then sys_mmap(a2, a5, a6)
@@ -212,6 +219,27 @@ module Kernel
       poke64(address + STAT_ST_SIZE, file[:size])
       poke64(address + STAT_BLKSIZE, 1024)
       0
+    end
+
+    ERANGE = -34
+
+    # There is one directory and everything is in it. Linux returns the length
+    # including the terminating NUL.
+    def self.sys_getcwd(buffer, size)
+      return ERANGE if size < 2
+
+      write_bytes(buffer, [47, 0])   # "/"
+      2
+    end
+
+    # Does this path exist? Everything served is readable and nothing is
+    # writable or executable, so the mode the caller asks about does not change
+    # the answer.
+    def self.sys_access(path_address)
+      path = cstring(path_address)
+      return 0 if VFS.exist?(path) || VFS.directory?(path)
+
+      ENOENT
     end
 
     # Describing a file by name. The same decisions as sys_fstat, made from the

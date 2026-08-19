@@ -37,35 +37,36 @@ require "ripper"
 puts "io/console: IO#raw #{IO.method_defined?(:raw)}"
 puts "ripper: #{Ripper.lex("1 + 1").length} tokens from Ripper.lex"
 
-# ---------------------------------------------------------------- the REPL
-#
-# Deliberately small. irb is the goal, and this exists to settle everything
-# underneath it first: that a blocking read on the console returns a line, that
-# the line discipline in the Ruby kernel turns Return into something gets will
-# accept, and that eval and the exception path work. Whatever breaks here would
-# break inside irb, where it would be much harder to see.
+# ---------------------------------------------------------------- irb
 
-def repl
-  puts
-  puts "picoruby-kernel repl -- 'exit' to leave"
-
-  loop do
-    print "> "
-    line = STDIN.gets
-    break if line.nil?
-
-    line = line.chomp
-    next if line.empty?
-    break if line == "exit"
-
-    begin
-      puts "=> #{eval(line, TOPLEVEL_BINDING).inspect}"
-    rescue SyntaxError, StandardError => e
-      puts "#{e.class}: #{e.message}"
-    end
+# CRuby names its encoding constants from the encoding database, which is
+# normally a dynamically loaded extension. kernel/enc.c declares the four
+# built-in encodings but cannot create the constants, so they are made here
+# from what is registered. Without them reline fails on Encoding::US_ASCII.
+Encoding.list.each do |encoding|
+  name = encoding.name.gsub("-", "_").gsub(".", "_")
+  next if Encoding.const_defined?(name, false)
+  begin
+    Encoding.const_set(name, encoding)
+  rescue NameError
+    # Names that are not valid constants; nothing looks those up by constant.
   end
-
-  puts "repl done"
 end
 
-repl
+ENV["TERM"] = "dumb"
+begin
+  require "irb"
+  puts "irb #{IRB::VERSION} loaded"
+
+  # No pager to page into, no filesystem to save history on, and completion
+  # left off until the terminal is a terminal.
+  IRB.conf[:USE_PAGER] = false
+  IRB.conf[:SAVE_HISTORY] = nil
+  IRB.conf[:USE_AUTOCOMPLETE] = false
+
+  IRB.start
+  puts "irb finished"
+rescue Exception => e
+  puts "irb failed: #{e.class}: #{e.message}"
+  puts e.backtrace.first(8).join("\n") if e.backtrace
+end

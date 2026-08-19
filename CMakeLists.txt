@@ -204,6 +204,7 @@ ExternalProject_Add(cruby_cross
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchain-x86_64-bare-metal.cmake
     -DMUSL_INSTALL=${TP}/musl/install
     -DCRUBY_SRC=${TP}/cruby
+    -DGEMS_DIR=${GEMS_DIR}
     -DCRUBY_HOST_BUILD=${CRUBY_HOST_DIR}
     -DCMAKE_BUILD_TYPE=Release
 
@@ -283,6 +284,34 @@ ExternalProject_Add(picoruby
   STEP_TARGETS download patch configure build install
 )
 
+# ---------------------------------------------------------------- bundled gems
+# NOTE:
+# irb and reline ship as bundled gems rather than in the CRuby tree, so they
+# are fetched at the versions gems/bundled_gems names. This is the one stage
+# that reaches the network for something other than a git repository.
+set(GEMS_DIR ${TP}/gems)
+find_program(GEM_EXECUTABLE gem REQUIRED)
+
+
+ExternalProject_Add(gems
+  SOURCE_DIR ${GEMS_DIR}
+  DEPENDS cruby
+
+  DOWNLOAD_COMMAND ${CMAKE_COMMAND}
+      -DBUNDLED_GEMS=${TP}/cruby/gems/bundled_gems
+      -DDEST=${GEMS_DIR}
+      -DGEM=${GEM_EXECUTABLE}
+      -DNAMES=irb,reline
+      -P ${DEPS_DIR}/fetch_gems.cmake
+
+  UPDATE_COMMAND    ""
+  CONFIGURE_COMMAND ""
+  BUILD_COMMAND     ""
+  INSTALL_COMMAND   ""
+  USES_TERMINAL_DOWNLOAD ON
+  STEP_TARGETS download
+)
+
 # ---------------------------------------------------------------- kernel
 set(KERNEL_DIR   ${CMAKE_BINARY_DIR}/kernel)
 set(KERNEL_ELF   ${KERNEL_DIR}/kernel.elf)
@@ -291,7 +320,7 @@ set(KERNEL64_ELF ${KERNEL_DIR}/kernel64.elf)
 ExternalProject_Add(kernel
   SOURCE_DIR ${CMAKE_SOURCE_DIR}/kernel
   BINARY_DIR ${KERNEL_DIR}
-  DEPENDS musl picoruby cruby_cross
+  DEPENDS musl picoruby cruby_cross gems
 
   DOWNLOAD_COMMAND ""
   UPDATE_COMMAND   ""
@@ -315,6 +344,7 @@ ExternalProject_Add(kernel
     -DEMBED_SCRIPT=${DEPS_DIR}/embed_script.cmake
     -DEMBED_FILES=${DEPS_DIR}/embed_files.cmake
     -DCRUBY_SRC=${TP}/cruby
+    -DGEMS_DIR=${GEMS_DIR}
     -DCMAKE_BUILD_TYPE=Release
 
   BUILD_BYPRODUCTS ${KERNEL_ELF} ${KERNEL64_ELF}
@@ -330,7 +360,7 @@ if(QEMU_EXECUTABLE)
   add_custom_target(run
     COMMAND ${QEMU_EXECUTABLE}
             -kernel ${KERNEL_ELF}
-            -m 512M
+            -m 2048
             -serial stdio
             -display none
             -no-reboot
@@ -422,7 +452,7 @@ if(QEMU_EXECUTABLE)
            # input. With no input the system sits at the prompt, which is
            # correct, so the summary printed after the REPL belongs to the
            # test that actually drives it.
-           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex"
+           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|irb 1[.0-9]* loaded|irb\\(main\\):001"
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial.log
            # The kernel halts instead of exiting, so QEMU always runs for the
            # full timeout. Booting takes well under a second here; the margin
@@ -430,16 +460,16 @@ if(QEMU_EXECUTABLE)
            -DSECONDS=5
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/boot_serial.cmake)
 
-  # Drives the REPL over the serial console: input goes in, results come back.
-  # This is what irb will need working underneath it, so it is worth having
-  # covered on its own.
-  add_test(NAME verify_repl COMMAND ${CMAKE_COMMAND}
+  # Drives irb over the serial console: input goes in, results come back.
+  add_test(NAME verify_irb COMMAND ${CMAKE_COMMAND}
            -DQEMU=${QEMU_EXECUTABLE}
            -DKERNEL=${KERNEL_ELF}
-           -DINPUT=${CMAKE_SOURCE_DIR}/test/repl_session.txt
-           -DLOG=${CMAKE_CURRENT_BINARY_DIR}/repl_serial.log
-           -DSECONDS=20
-           "-DEXPECT==> 2|=> \\[3, 6, 9\\]|NameError: undefined local variable or method 'nope'|repl done|ruby serviced [1-9][0-9]* writes, [0-9]+ bytes, [1-9][0-9]* opens"
+           -DINPUT=${CMAKE_SOURCE_DIR}/test/irb_session.txt
+           -DLOG=${CMAKE_CURRENT_BINARY_DIR}/irb_serial.log
+           # irb takes a few seconds to load 200-odd files through the VFS.
+           -DSECONDS=40
+           -DINPUT_DELAY=8
+           "-DEXPECT=irb 1[.0-9]* loaded|irb\\(main\\):001|=> 2|=> \\[3, 6, 9\\]|irb finished"
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/boot_serial.cmake)
 endif()
 
