@@ -141,6 +141,14 @@ ExternalProject_Add(cruby
 
   UPDATE_COMMAND ""
 
+  # NOTE:
+  # Two changes CRuby needs to run without an OS underneath: builtin function
+  # lookup has to tolerate a missing table, and thread stack discovery has to
+  # be replaced with the fixed stack the linker script provides.
+  PATCH_COMMAND ${CMAKE_COMMAND}
+      -DDIR=${TP}/cruby -DPATCH=${CMAKE_SOURCE_DIR}/patches/cruby.patch
+      -P ${DEPS_DIR}/apply_patch.cmake
+
   # autogen.sh derives the source directory from its own path, so running it
   # from the build directory is fine; it writes configure into the source tree.
   CONFIGURE_COMMAND <SOURCE_DIR>/autogen.sh
@@ -168,7 +176,47 @@ ExternalProject_Add(cruby
   USES_TERMINAL_CONFIGURE ON
   USES_TERMINAL_BUILD     ON
   USES_TERMINAL_INSTALL   ON
-  STEP_TARGETS download configure build install
+  STEP_TARGETS download patch configure build install
+)
+
+# ---------------------------------------------------------------- CRuby (cross)
+# NOTE:
+# This one is a child CMake project rather than a wrapped foreign build, so it
+# can use the bare-metal toolchain file and be written as ordinary CMake. It has
+# to be an ExternalProject for the same reason everything else here is: the
+# libraries and generated sources it consumes do not exist at configure time.
+set(CRUBY_CROSS_DIR ${CMAKE_BINARY_DIR}/cruby_cross)
+set(CRUBY_LIB       ${CRUBY_CROSS_DIR}/libruby-static.a)
+
+ExternalProject_Add(cruby_cross
+  SOURCE_DIR ${CMAKE_SOURCE_DIR}/cruby_build
+  BINARY_DIR ${CRUBY_CROSS_DIR}
+  DEPENDS cruby musl
+
+  DOWNLOAD_COMMAND ""
+  UPDATE_COMMAND   ""
+  INSTALL_COMMAND  ""
+
+  CMAKE_ARGS
+    -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchain-x86_64-bare-metal.cmake
+    -DMUSL_INSTALL=${TP}/musl/install
+    -DCRUBY_SRC=${TP}/cruby
+    -DCRUBY_HOST_BUILD=${CRUBY_HOST_DIR}
+    -DCMAKE_BUILD_TYPE=Release
+
+  BUILD_BYPRODUCTS ${CRUBY_LIB}
+
+  # NOTE:
+  # ExternalProject cannot see into a child project, so edits to
+  # cruby_build/CMakeLists.txt or its sources leave the build stamp looking
+  # current and the change silently does not get built. Always entering the
+  # child build fixes that; the child is Ninja and no-ops in well under a
+  # second when nothing changed.
+  BUILD_ALWAYS ON
+
+  USES_TERMINAL_CONFIGURE ON
+  USES_TERMINAL_BUILD     ON
+  STEP_TARGETS configure build
 )
 
 # ---------------------------------------------------------------- PicoRuby
@@ -283,6 +331,14 @@ add_files_exist_test(verify_build_cruby_host
 add_test(NAME verify_cruby_host COMMAND ${CMAKE_COMMAND}
          -DSRC=${TP}/cruby -DBUILD=${CRUBY_HOST_DIR}
          -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/cruby_host.cmake)
+
+add_files_exist_test(verify_build_cruby_cross ${CRUBY_LIB})
+
+add_test(NAME verify_cruby_cross COMMAND ${CMAKE_COMMAND}
+         -DARCHIVE=${CRUBY_LIB}
+         -DLIBC=${TP}/musl/install/lib/libc.a
+         -DLLVM_NM=${LLVM_NM_EXECUTABLE}
+         -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/cruby_cross.cmake)
 
 add_files_exist_test(verify_clone_picoruby
   ${TP}/picoruby/build_config/picorbc.rb

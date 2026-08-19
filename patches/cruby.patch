@@ -1,0 +1,41 @@
+diff --git a/compile.c b/compile.c
+index d8f327c..629dee4 100644
+--- a/compile.c
++++ b/compile.c
+@@ -9118,6 +9118,11 @@ iseq_builtin_function_lookup(const rb_iseq_t *iseq, const char *name)
+ {
+     int i;
+     const struct rb_builtin_function *table = ISEQ_COMPILE_DATA(iseq)->builtin_function_table;
++    /* picoruby-kernel: the kernel loads precompiled iseqs without a builtin
++     * function table, so looking one up has to fail gracefully. */
++    if (!table) {
++        return NULL;
++    }
+     for (i=0; table[i].index != -1; i++) {
+         if (strcmp(table[i].name, name) == 0) {
+             return &table[i];
+diff --git a/thread_pthread.c b/thread_pthread.c
+index d599abc..78c3d3e 100644
+--- a/thread_pthread.c
++++ b/thread_pthread.c
+@@ -2125,6 +2125,12 @@ native_thread_init_main_thread_stack(void *addr)
+ static int
+ native_thread_init_stack(rb_thread_t *th, void *local_in_parent_frame)
+ {
++    /* picoruby-kernel: there is one thread and its stack comes from the linker
++     * script, so pthread-based stack discovery has nothing to discover. */
++    th->ec->machine.stack_start = local_in_parent_frame;
++    th->ec->machine.stack_maxsize = 8388608; /* 8MB, matches the kernel stack */
++    return 0;
++#if 0 /* pthread stack discovery, unavailable on bare metal */
+     rb_nativethread_id_t curr = pthread_self();
+ #ifdef RUBY_ASAN_ENABLED
+     local_in_parent_frame = asan_get_real_stack_addr(local_in_parent_frame);
+@@ -2159,6 +2165,7 @@ native_thread_init_stack(rb_thread_t *th, void *local_in_parent_frame)
+     }
+ 
+     return 0;
++#endif /* pthread stack discovery */
+ }
+ 
+ struct nt_param {
