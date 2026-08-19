@@ -417,17 +417,28 @@ if(QEMU_EXECUTABLE)
            -DKERNEL=${KERNEL_ELF}
            # Enough Ruby to show the VM is genuinely executing: a literal, a
            # block with an integer method, and string interpolation.
-           # The last one is the point of the whole arrangement: CRuby's
-           # output reached the console by way of Ruby code running in the
-           # other VM. A count kept on the Ruby side is the only evidence,
-           # since the output looks the same either way. The number is left
-           # open so editing the userland script does not break the test.
-           "-DEXPECT=boot ok|tls ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|ruby serviced [1-9][0-9]* writes, [0-9]+ bytes, [1-9][0-9]* opens"
+           # Everything up to the point where the REPL starts waiting for
+           # input. With no input the system sits at the prompt, which is
+           # correct, so the summary printed after the REPL belongs to the
+           # test that actually drives it.
+           "-DEXPECT=boot ok|tls ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true"
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial.log
            # The kernel halts instead of exiting, so QEMU always runs for the
            # full timeout. Booting takes well under a second here; the margin
            # is for slower machines, and grows as the kernel does more.
            -DSECONDS=5
+           -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/boot_serial.cmake)
+
+  # Drives the REPL over the serial console: input goes in, results come back.
+  # This is what irb will need working underneath it, so it is worth having
+  # covered on its own.
+  add_test(NAME verify_repl COMMAND ${CMAKE_COMMAND}
+           -DQEMU=${QEMU_EXECUTABLE}
+           -DKERNEL=${KERNEL_ELF}
+           -DINPUT=${CMAKE_SOURCE_DIR}/test/repl_session.txt
+           -DLOG=${CMAKE_CURRENT_BINARY_DIR}/repl_serial.log
+           -DSECONDS=20
+           "-DEXPECT==> 2|=> \\[3, 6, 9\\]|NameError: undefined local variable or method 'nope'|repl done|ruby serviced [1-9][0-9]* writes, [0-9]+ bytes, [1-9][0-9]* opens"
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/boot_serial.cmake)
 endif()
 

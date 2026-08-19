@@ -1,7 +1,11 @@
 # The first Ruby that runs on top of CRuby.
 #
 # Embedded in the image as a string and evaluated at boot. There is no
-# filesystem yet, so this is how userland code gets in.
+# filesystem CRuby can require from yet, so this is how userland code gets in.
+
+# Nothing here is a terminal as far as the kernel is concerned, so CRuby block
+# buffers its output. A prompt that appears after the answer is not a prompt.
+STDOUT.sync = true
 
 puts "cruby #{RUBY_VERSION} on picoruby-kernel"
 puts "1 + 1 = #{1 + 1}"
@@ -19,3 +23,48 @@ puts [3, 1, 2].sort.inspect
 # other VM.
 puts File.read("/hello.rb")
 puts "read #{File.size("/hello.rb")} bytes from the Ruby VFS"
+
+# The two extensions irb depends on, linked into the image and registered by
+# Init_ext rather than loaded from disk. Checking them here rather than
+# discovering it inside irb, where the failure would be much harder to read.
+require "io/console"
+require "ripper"
+puts "io/console: IO#raw #{IO.method_defined?(:raw)}"
+# Ripper is registered and its constants exist, but calling into it hangs:
+# the parse.y parser it uses is not functional in this build, while the Prism
+# path that eval uses is. irb's RubyLex depends on Ripper, so this is the thing
+# to resolve next.
+puts "ripper: defined=#{defined?(Ripper) ? true : false} (not yet usable)"
+
+# ---------------------------------------------------------------- the REPL
+#
+# Deliberately small. irb is the goal, and this exists to settle everything
+# underneath it first: that a blocking read on the console returns a line, that
+# the line discipline in the Ruby kernel turns Return into something gets will
+# accept, and that eval and the exception path work. Whatever breaks here would
+# break inside irb, where it would be much harder to see.
+
+def repl
+  puts
+  puts "picoruby-kernel repl -- 'exit' to leave"
+
+  loop do
+    print "> "
+    line = STDIN.gets
+    break if line.nil?
+
+    line = line.chomp
+    next if line.empty?
+    break if line == "exit"
+
+    begin
+      puts "=> #{eval(line, TOPLEVEL_BINDING).inspect}"
+    rescue SyntaxError, StandardError => e
+      puts "#{e.class}: #{e.message}"
+    end
+  end
+
+  puts "repl done"
+end
+
+repl

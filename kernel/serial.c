@@ -39,6 +39,10 @@ serial_init(void)
     outb(COM1 + COM_DATA,       0x03);              /* 38400 baud */
     outb(COM1 + COM_INT_ENABLE, 0x00);
     outb(COM1 + COM_LINE_CTRL,  LINE_CTRL_8N1);
+    /* Enabling the FIFOs also resets them, so anything that arrived before the
+     * port was configured is discarded here. Real machines lose keystrokes
+     * typed during firmware the same way; what it means for this project is
+     * that a test piping input in at start has to wait for the prompt. */
     outb(COM1 + COM_FIFO_CTRL,  0xC7);              /* enable and clear FIFOs */
     outb(COM1 + COM_MODEM_CTRL, 0x0B);              /* DTR, RTS, OUT2 */
 }

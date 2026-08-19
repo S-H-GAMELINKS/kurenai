@@ -11,6 +11,11 @@
 #
 # The kernel halts rather than exiting, so QEMU is stopped by the timeout and
 # its exit status carries no information. The serial log is the result.
+#
+# With INPUT, the console becomes bidirectional and the file is typed into it.
+# It is sent after INPUT_DELAY seconds rather than immediately: enabling the
+# UART's FIFOs resets them, so anything that arrived before the kernel got that
+# far is gone.
 
 cmake_minimum_required(VERSION 3.25)
 
@@ -25,17 +30,32 @@ endif()
 
 file(REMOVE "${LOG}")
 
-execute_process(
-  COMMAND ${QEMU}
-          -kernel "${KERNEL}"
-          -m 512M
-          -serial file:${LOG}
-          -display none
-          -no-reboot
-  TIMEOUT ${SECONDS}
-  RESULT_VARIABLE rc
-  OUTPUT_VARIABLE out
-  ERROR_VARIABLE err)
+if(DEFINED INPUT)
+  if(NOT DEFINED INPUT_DELAY)
+    set(INPUT_DELAY 2)
+  endif()
+  # -serial stdio, so the console is readable as well as writable. The delay
+  # needs a shell; this project is Linux-only and already requires one.
+  execute_process(
+    COMMAND sh -c
+            "(sleep ${INPUT_DELAY}; cat '${INPUT}') | '${QEMU}' -kernel '${KERNEL}' -m 512M -serial stdio -display none -no-reboot > '${LOG}' 2>&1"
+    TIMEOUT ${SECONDS}
+    RESULT_VARIABLE rc
+    OUTPUT_VARIABLE out
+    ERROR_VARIABLE err)
+else()
+  execute_process(
+    COMMAND ${QEMU}
+            -kernel "${KERNEL}"
+            -m 512M
+            -serial file:${LOG}
+            -display none
+            -no-reboot
+    TIMEOUT ${SECONDS}
+    RESULT_VARIABLE rc
+    OUTPUT_VARIABLE out
+    ERROR_VARIABLE err)
+endif()
 
 if(NOT EXISTS "${LOG}")
   message(FATAL_ERROR

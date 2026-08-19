@@ -107,12 +107,44 @@ module Kernel
     # ---------------------------------------------------------------- files
 
     def self.sys_read(fd, buffer, count)
-      return serial_read(buffer, count) if fd == FD::CONSOLE_IN
+      return read_console(buffer, count) if fd == FD::CONSOLE_IN
 
       length = FD.read(fd, buffer, count)
       return EBADF if length.nil?
       return EAGAIN if length == :empty
 
+      length
+    end
+
+    # The beginnings of a line discipline, and the reason it belongs in Ruby.
+    #
+    # A terminal sends carriage return when Return is pressed, and a program
+    # calling gets waits for a line feed, so something has to translate. The
+    # terminal is also not echoing -- there is no terminal, only a serial port
+    # -- so the kernel has to show the user what they typed. Neither of these
+    # is a property of the hardware; both are policy, and this is where policy
+    # lives.
+    CR = 13
+    LF = 10
+
+    def self.read_console(buffer, count)
+      length = serial_read(buffer, count)
+      return length if length <= 0
+
+      bytes = read_bytes(buffer, length)
+      translated = false
+      i = 0
+      while i < bytes.length
+        if bytes[i] == CR
+          bytes[i] = LF
+          translated = true
+        end
+        i += 1
+      end
+      write_bytes(buffer, bytes) if translated
+
+      # Echo, so typing is visible.
+      serial_write(buffer, length)
       length
     end
 

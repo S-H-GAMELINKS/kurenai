@@ -16,6 +16,24 @@ typedef unsigned long ID;
 
 void  ruby_init_stack(volatile void *addr);
 int   ruby_setup(void);
+
+/* Normally reached through ruby_options, which parses a command line and then
+ * finishes initialisation. There is no command line here, so the parts that
+ * matter are called directly. Without them CRuby starts and runs ordinary
+ * code, which is what made their absence easy to miss:
+ *
+ *   Init_ext                registers the statically linked extensions, so
+ *                           require "io/console" and require "ripper" resolve
+ *   rb_call_builtin_inits   installs the builtin function tables, without
+ *                           which every Primitive-backed method in the prelude
+ *                           misbehaves -- Kernel#loop, #class, #tap, #then,
+ *                           #frozen?, Integer(), Float()
+ *   Init_builtin_features   loads the builtin Ruby itself
+ */
+void  Init_ext(void);
+void  Init_extra_exts(void);
+void  rb_call_builtin_inits(void);
+void  Init_builtin_features(void);
 void  ruby_script(const char *name);
 int   rb_eval_string_protect(const char *str, int *state);
 VALUE rb_errinfo(void);
@@ -59,6 +77,11 @@ cruby_start(void)
         serial_puts("cruby: ruby_setup failed\n");
         return;
     }
+    Init_ext();
+    Init_extra_exts();
+    rb_call_builtin_inits();
+    Init_builtin_features();
+
     ruby_script("picoruby-kernel");
     serial_puts("cruby init ok\n");
 
