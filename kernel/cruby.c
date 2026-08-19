@@ -11,10 +11,37 @@
 
 #include "kernel.h"
 
-void ruby_init_stack(volatile void *addr);
-int  ruby_setup(void);
-void ruby_script(const char *name);
-int  rb_eval_string_protect(const char *str, int *state);
+typedef unsigned long VALUE;
+typedef unsigned long ID;
+
+void  ruby_init_stack(volatile void *addr);
+int   ruby_setup(void);
+void  ruby_script(const char *name);
+int   rb_eval_string_protect(const char *str, int *state);
+VALUE rb_errinfo(void);
+void  rb_set_errinfo(VALUE err);
+ID    rb_intern(const char *name);
+VALUE rb_funcall(VALUE recv, ID mid, int argc, ...);
+char *rb_string_value_cstr(volatile VALUE *ptr);
+
+/* Reports why the script failed. Worth the extra CRuby surface: without it a
+ * failure is indistinguishable from any other, and the whole point of running
+ * Ruby here is to be told what went wrong. */
+static void
+report_exception(void)
+{
+    VALUE err = rb_errinfo();
+    rb_set_errinfo(0 /* Qnil */);
+
+    serial_puts("cruby: ");
+    VALUE klass = rb_funcall(err, rb_intern("class"), 0);
+    VALUE name = rb_funcall(klass, rb_intern("to_s"), 0);
+    serial_puts(rb_string_value_cstr(&name));
+    serial_puts(": ");
+    VALUE message = rb_funcall(err, rb_intern("message"), 0);
+    serial_puts(rb_string_value_cstr(&message));
+    serial_putc('\n');
+}
 
 /* The userland script, embedded at build time. */
 extern const char userland_script[];
@@ -37,9 +64,5 @@ cruby_start(void)
 
     int state = 0;
     rb_eval_string_protect(userland_script, &state);
-    if (state) {
-        /* Printing the exception needs more of CRuby than has been proven to
-         * work here, so report the fact and leave the detail for later. */
-        serial_puts("cruby: exception while evaluating the userland script\n");
-    }
+    if (state) report_exception();
 }

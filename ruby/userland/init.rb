@@ -13,3 +13,9 @@ puts "2**100 = #{2**100}"
 
 # The parser is Prism, compiled into the kernel image.
 puts [3, 1, 2].sort.inspect
+
+# Read a file whose filesystem is implemented in Ruby. Between File.read and
+# the bytes arriving, every step -- open, fstat, read, close -- ran in the
+# other VM.
+puts File.read("/hello.rb")
+puts "read #{File.size("/hello.rb")} bytes from the Ruby VFS"

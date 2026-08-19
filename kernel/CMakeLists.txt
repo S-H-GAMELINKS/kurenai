@@ -18,13 +18,20 @@
 cmake_minimum_required(VERSION 3.25)
 project(picoruby_kernel LANGUAGES C ASM)
 
-foreach(v BOOT_DIR RUBY_DIR PICORBC PICORUBY_LIB PICORUBY_INCLUDE_DIRS MUSL_INSTALL CRUBY_LIB)
+foreach(v BOOT_DIR RUBY_DIR PICORBC PICORUBY_LIB PICORUBY_INCLUDE_DIRS MUSL_INSTALL
+          CRUBY_LIB EMBED_SCRIPT EMBED_FILES)
   if(NOT ${v})
     message(FATAL_ERROR "kernel: -D${v}=... is required")
   endif()
 endforeach()
 
 find_program(LLD_EXECUTABLE ld.lld REQUIRED)
+
+# Prints every routed syscall, its result, and any exception raised while
+# servicing it. Off by default because it is written to the same console the
+# system uses, but it is the only way to see what CRuby is asking for and what
+# the Ruby kernel answered.
+option(BRIDGE_TRACE "Trace syscalls routed to Ruby" OFF)
 
 # ---------------------------------------------------------------- Ruby -> C
 # picorbc emits the bytecode as a C array directly, so no separate embedding
@@ -37,12 +44,34 @@ add_custom_command(
   DEPENDS ${RUBY_DIR}/kernel/boot.rb ${PICORBC}
   COMMENT "Compiling ruby/kernel/boot.rb")
 
+# The kernel's Ruby, compiled as one unit. Order matters: vfs and fd have to be
+# defined before syscall.rb refers to them.
+set(KERNEL_RUBY
+  ${RUBY_DIR}/kernel/vfs.rb
+  ${RUBY_DIR}/kernel/fd.rb
+  ${RUBY_DIR}/kernel/syscall.rb)
+
 set(SYSCALL_BYTECODE ${CMAKE_CURRENT_BINARY_DIR}/syscall_bytecode.c)
 add_custom_command(
   OUTPUT ${SYSCALL_BYTECODE}
-  COMMAND ${PICORBC} -B syscall_bytecode -o ${SYSCALL_BYTECODE} ${RUBY_DIR}/kernel/syscall.rb
-  DEPENDS ${RUBY_DIR}/kernel/syscall.rb ${PICORBC}
-  COMMENT "Compiling ruby/kernel/syscall.rb")
+  COMMAND ${PICORBC} -B syscall_bytecode -o ${SYSCALL_BYTECODE} ${KERNEL_RUBY}
+  DEPENDS ${KERNEL_RUBY} ${PICORBC}
+  COMMENT "Compiling the kernel's Ruby")
+
+# ---------------------------------------------------------------- embedded files
+# The read-only filesystem, served by ruby/kernel/vfs.rb.
+set(EMBEDDED_FILES ${RUBY_DIR}/files/hello.rb)
+string(REPLACE ";" "|" EMBEDDED_FILES_ARG "${EMBEDDED_FILES}")
+
+set(EMBEDDED_FILES_C ${CMAKE_CURRENT_BINARY_DIR}/embedded_files.c)
+add_custom_command(
+  OUTPUT ${EMBEDDED_FILES_C}
+  COMMAND ${CMAKE_COMMAND}
+          -DFILES=${EMBEDDED_FILES_ARG}
+          -DOUTPUT=${EMBEDDED_FILES_C}
+          -P ${EMBED_FILES}
+  DEPENDS ${EMBEDDED_FILES} ${EMBED_FILES}
+  COMMENT "Embedding the read-only filesystem")
 
 # ---------------------------------------------------------------- Ruby -> string
 # The CRuby side has no bytecode compiler available at build time, and no
@@ -76,6 +105,7 @@ add_executable(kernel64.elf
   bridge.c
   ${BOOT_BYTECODE}
   ${SYSCALL_BYTECODE}
+  ${EMBEDDED_FILES_C}
   ${USERLAND_SCRIPT})
 
 target_include_directories(kernel64.elf PRIVATE
@@ -88,6 +118,10 @@ target_include_directories(kernel64.elf PRIVATE
 # misbehaves at run time: the kernel and the library disagree about what a
 # Ruby object is, and every type check reads the wrong bytes. vm.c carries a
 # static assertion so the next mismatch is a compile error instead.
+if(BRIDGE_TRACE)
+  target_compile_definitions(kernel64.elf PRIVATE BRIDGE_TRACE)
+endif()
+
 target_compile_definitions(kernel64.elf PRIVATE
   MRB_INT64
   MRB_NO_BOXING

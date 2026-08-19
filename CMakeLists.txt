@@ -313,6 +313,7 @@ ExternalProject_Add(kernel
     -DPICORUBY_INCLUDE_DIRS=${PICORUBY_INCLUDE_DIRS_ARG}
     -DCRUBY_LIB=${CRUBY_LIB}
     -DEMBED_SCRIPT=${DEPS_DIR}/embed_script.cmake
+    -DEMBED_FILES=${DEPS_DIR}/embed_files.cmake
     -DCMAKE_BUILD_TYPE=Release
 
   BUILD_BYPRODUCTS ${KERNEL_ELF} ${KERNEL64_ELF}
@@ -421,7 +422,7 @@ if(QEMU_EXECUTABLE)
            # other VM. A count kept on the Ruby side is the only evidence,
            # since the output looks the same either way. The number is left
            # open so editing the userland script does not break the test.
-           "-DEXPECT=boot ok|tls ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|ruby serviced [1-9][0-9]* writes"
+           "-DEXPECT=boot ok|tls ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|ruby serviced [1-9][0-9]* writes, [0-9]+ bytes, [1-9][0-9]* opens"
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial.log
            # The kernel halts instead of exiting, so QEMU always runs for the
            # full timeout. Booting takes well under a second here; the margin

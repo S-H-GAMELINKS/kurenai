@@ -23,7 +23,9 @@
 #include <stdint.h>
 
 #include <mruby.h>
+#include <mruby/array.h>
 #include <mruby/class.h>
+#include <mruby/string.h>
 #include <mruby/variable.h>
 
 #include "kernel.h"
@@ -64,6 +66,138 @@ prim_serial_write(mrb_state *mrb, mrb_value self)
     mrb_get_args(mrb, "ii", &address, &count);
     if (count > 0) serial_write((const char *)(uintptr_t)address, (size_t)count);
     return mrb_nil_value();
+}
+
+static mrb_value
+prim_serial_read(mrb_state *mrb, mrb_value self)
+{
+    mrb_int address, count;
+    (void)self;
+
+    mrb_get_args(mrb, "ii", &address, &count);
+    if (count <= 0) return mrb_int_value(mrb, 0);
+    size_t n = serial_read((char *)(uintptr_t)address, (size_t)count);
+    return mrb_int_value(mrb, (mrb_int)n);
+}
+
+/* Moves bytes between two places the Ruby side only knows as addresses: out of
+ * the image and into a caller's buffer. Ruby decides the ranges, C moves them,
+ * and nothing becomes a Ruby object on the way. */
+static mrb_value
+prim_copy_out(mrb_state *mrb, mrb_value self)
+{
+    mrb_int dest, src, length;
+    (void)self;
+
+    mrb_get_args(mrb, "iii", &dest, &src, &length);
+    if (length > 0)
+        __builtin_memcpy((void *)(uintptr_t)dest, (const void *)(uintptr_t)src,
+                         (size_t)length);
+    return mrb_nil_value();
+}
+
+static mrb_value
+prim_memzero(mrb_state *mrb, mrb_value self)
+{
+    mrb_int address, length;
+    (void)self;
+
+    mrb_get_args(mrb, "ii", &address, &length);
+    if (length > 0)
+        __builtin_memset((void *)(uintptr_t)address, 0, (size_t)length);
+    return mrb_nil_value();
+}
+
+/* Reads a NUL-terminated string out of the caller's memory. This one does
+ * create a Ruby object, and has to: a path is something the Ruby kernel
+ * compares and looks up, not a range it forwards. The bytes are copied, so the
+ * result belongs to the VM that made it. */
+static mrb_value
+prim_cstring(mrb_state *mrb, mrb_value self)
+{
+    mrb_int address;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &address);
+    if (address == 0) return mrb_str_new_lit(mrb, "");
+
+    const char *p = (const char *)(uintptr_t)address;
+    size_t len = 0;
+    while (len < 4096 && p[len]) len++;
+    return mrb_str_new(mrb, p, len);
+}
+
+/* The table the linker built, handed over once at boot. Each entry is
+ * [path, address, size]; ruby/kernel/vfs.rb turns it into a lookup. */
+struct embedded_file {
+    const char          *path;
+    const unsigned char *data;
+    size_t               size;
+};
+extern const struct embedded_file embedded_files[];
+extern const size_t embedded_file_count;
+
+static mrb_value
+prim_embedded_files(mrb_state *mrb, mrb_value self)
+{
+    (void)self;
+
+    mrb_value list = mrb_ary_new_capa(mrb, (mrb_int)embedded_file_count);
+    for (size_t i = 0; i < embedded_file_count; i++) {
+        mrb_value entry = mrb_ary_new_capa(mrb, 3);
+        mrb_ary_push(mrb, entry, mrb_str_new_cstr(mrb, embedded_files[i].path));
+        mrb_ary_push(mrb, entry,
+                     mrb_int_value(mrb, (mrb_int)(uintptr_t)embedded_files[i].data));
+        mrb_ary_push(mrb, entry, mrb_int_value(mrb, (mrb_int)embedded_files[i].size));
+        mrb_ary_push(mrb, list, entry);
+    }
+    return list;
+}
+
+static mrb_value
+prim_poke32(mrb_state *mrb, mrb_value self)
+{
+    mrb_int address, value;
+    (void)self;
+
+    mrb_get_args(mrb, "ii", &address, &value);
+    *(uint32_t *)(uintptr_t)address = (uint32_t)value;
+    return mrb_nil_value();
+}
+
+/* Copies bytes out of the caller's memory into a Ruby Array of integers. Used
+ * for pipe writes, where the kernel has to keep the bytes rather than forward
+ * them, so they must become objects the Ruby side owns. */
+static mrb_value
+prim_read_bytes(mrb_state *mrb, mrb_value self)
+{
+    mrb_int address, length;
+    (void)self;
+
+    mrb_get_args(mrb, "ii", &address, &length);
+    if (length < 0) length = 0;
+
+    const unsigned char *p = (const unsigned char *)(uintptr_t)address;
+    mrb_value list = mrb_ary_new_capa(mrb, (mrb_int)length);
+    for (mrb_int i = 0; i < length; i++)
+        mrb_ary_push(mrb, list, mrb_int_value(mrb, p[i]));
+    return list;
+}
+
+static mrb_value
+prim_write_bytes(mrb_state *mrb, mrb_value self)
+{
+    mrb_int address;
+    mrb_value list;
+    (void)self;
+
+    mrb_get_args(mrb, "iA", &address, &list);
+
+    unsigned char *p = (unsigned char *)(uintptr_t)address;
+    mrb_int len = RARRAY_LEN(list);
+    for (mrb_int i = 0; i < len; i++)
+        p[i] = (unsigned char)mrb_integer(mrb_ary_entry(list, i));
+    return mrb_int_value(mrb, len);
 }
 
 static mrb_value
@@ -112,6 +246,22 @@ bridge_init(mrb_state *mrb)
                                prim_serial_write, MRB_ARGS_REQ(2));
     mrb_define_module_function(mrb, syscall_module, "clock_millis",
                                prim_clock_millis, MRB_ARGS_NONE());
+    mrb_define_module_function(mrb, syscall_module, "serial_read",
+                               prim_serial_read, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mrb, syscall_module, "copy_out",
+                               prim_copy_out, MRB_ARGS_REQ(3));
+    mrb_define_module_function(mrb, syscall_module, "memzero",
+                               prim_memzero, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mrb, syscall_module, "cstring",
+                               prim_cstring, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, syscall_module, "embedded_files",
+                               prim_embedded_files, MRB_ARGS_NONE());
+    mrb_define_module_function(mrb, syscall_module, "poke32",
+                               prim_poke32, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mrb, syscall_module, "read_bytes",
+                               prim_read_bytes, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mrb, syscall_module, "write_bytes",
+                               prim_write_bytes, MRB_ARGS_REQ(2));
     mrb_define_module_function(mrb, syscall_module, "peek64",
                                prim_peek64, MRB_ARGS_REQ(1));
     mrb_define_module_function(mrb, syscall_module, "poke64",
@@ -140,6 +290,9 @@ dispatch_in_ruby(mrb_state *mrb, long n, long a1, long a2, long a3,
 
     long ret;
     if (mrb->exc) {
+#ifdef BRIDGE_TRACE
+        mrb_print_error(mrb);
+#endif
         /* Do not try to describe it: printing would need the console, which
          * may be the very thing that failed. */
         mrb->exc = 0;
@@ -161,9 +314,19 @@ kernel_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6)
     mrb_state *mrb = vm_state();
 
     if (mrb && !in_dispatch && is_routed(n)) {
+#ifdef BRIDGE_TRACE
+        { char b[8]; int i=0; long v=n; if(!v)b[i++]='0';
+          while(v){b[i++]=(char)('0'+v%10);v/=10;}
+          serial_puts("<sys "); while(i--) serial_putc(b[i]); serial_puts(">"); }
+#endif
         in_dispatch = 1;
         long ret = dispatch_in_ruby(mrb, n, a1, a2, a3, a4, a5, a6);
         in_dispatch = 0;
+#ifdef BRIDGE_TRACE
+        { char b[16]; int i=0; long v=ret<0?-ret:ret; if(ret<0)serial_putc('-');
+          if(!v)b[i++]='0'; while(v){b[i++]=(char)('0'+v%10);v/=10;}
+          serial_puts("=> "); while(i--) serial_putc(b[i]); serial_puts("\n"); }
+#endif
         return ret;
     }
 
