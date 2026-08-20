@@ -93,6 +93,13 @@ embed_under(${CRUBY_SRC}/ext/ripper/lib
   ripper/filter.rb
   ripper/sexp.rb)
 
+# ext/socket's Ruby half, and it is not optional. require "socket" finds
+# socket.so already registered by Init_ext, then goes on looking for socket.rb
+# on the load path -- so without this file the require succeeds and Addrinfo,
+# Socket.tcp_server_sockets and Socket.tcp are simply missing. WEBrick asks for
+# all three.
+embed_under(${CRUBY_SRC}/ext/socket/lib socket.rb)
+
 # NOTE:
 # Everything a gem or the standard library ships, found by globbing rather than
 # listed. The argument against globs elsewhere is that a source list should say

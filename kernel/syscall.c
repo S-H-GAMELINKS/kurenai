@@ -140,6 +140,39 @@ sys_getrandom(uint8_t *buf, size_t len)
     return (long)len;
 }
 
+/* Machine identity. Six fixed-size fields, and musl's gethostname copies
+ * nodename out of the second one -- which is the only reason this exists:
+ * Socket.gethostname is how WEBrick fills in its :ServerName, and a server
+ * that cannot name itself refuses to start.
+ *
+ * struct utsname is not declared here because sys/utsname.h puts domainname
+ * behind _GNU_SOURCE; the offsets are what matter and they are fixed. */
+#define UTSNAME_FIELD 65
+
+static long
+sys_uname(char *buf)
+{
+    static const char *const fields[] = {
+        "Linux",            /* what the ABI is, and CRuby checks nothing else */
+        "picoruby-kernel",
+        "1.0.0",
+        "#1 picoruby-kernel",
+        "x86_64",
+        "(none)",
+    };
+
+    if (!buf) return -EFAULT;
+
+    for (unsigned i = 0; i < sizeof(fields) / sizeof(fields[0]); i++) {
+        char *field = buf + (size_t)i * UTSNAME_FIELD;
+        __builtin_memset(field, 0, UTSNAME_FIELD);
+        const char *src = fields[i];
+        size_t n = 0;
+        while (src[n] && n < UTSNAME_FIELD - 1) { field[n] = src[n]; n++; }
+    }
+    return 0;
+}
+
 static void
 report_unhandled(long n)
 {
@@ -199,6 +232,7 @@ kernel_syscall_c(long n, long a1, long a2, long a3, long a4, long a5, long a6)
     /* ---- cpu and process ---- */
     case SYS_arch_prctl: return sys_arch_prctl((int)a1, (unsigned long)a2);
     case SYS_getrandom:  return sys_getrandom((uint8_t *)a1, (size_t)a2);
+    case SYS_uname:      return sys_uname((char *)a1);
     case SYS_getpid:     return 1;
     case SYS_gettid:     return 1;
     case SYS_getuid:
@@ -216,6 +250,12 @@ kernel_syscall_c(long n, long a1, long a2, long a3, long a4, long a5, long a6)
     case SYS_sigaltstack: return 0;   /* no signals, so no alternate stack */
     case SYS_tkill:      return 0;   /* the only thread is the one signalling */
     case SYS_sched_getaffinity: return -ENOSYS;
+
+    /* IO.copy_stream tries sendfile before falling back to read and write, and
+     * io.c treats ENOSYS as exactly that invitation. Naming it here rather
+     * than letting report_unhandled print it keeps a correct fallback from
+     * looking like a missing feature. */
+    case SYS_sendfile:   return -ENOSYS;
 
     /* Signals can be registered but are never delivered: there is no source of
      * them. Reporting success keeps Signal.trap working, and its handlers are

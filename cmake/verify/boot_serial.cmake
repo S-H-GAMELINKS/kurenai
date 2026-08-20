@@ -4,6 +4,13 @@
 # EXPECT is one or more regular expressions separated by "|", all of which must
 # appear. A CMake list cannot be used: add_test splits arguments on semicolons.
 #
+# EXPECT_NONE is the same, for patterns that must not appear. Asserting on a
+# line that is present says the kernel got somewhere; asserting on one that is
+# absent says it did not get there the wrong way, and that is not the same
+# check. A CRuby that reaches rb_bug prints and aborts, which from the outside
+# looks a great deal like a kernel that booted and then stopped saying
+# anything.
+#
 # Boots the kernel and looks for a string on the serial console. This is the
 # only check that covers the whole path at once: the Multiboot header being
 # found, the switch to long mode, the flat image landing where the stub jumps,
@@ -80,5 +87,24 @@ if(unmatched)
     "QEMU result: ${rc}\n${err}")
 endif()
 
+set(forbidden "")
+if(DEFINED EXPECT_NONE)
+  string(REPLACE "|" ";" refused "${EXPECT_NONE}")
+  foreach(pattern IN LISTS refused)
+    if(serial MATCHES "${pattern}")
+      list(APPEND forbidden "${pattern}")
+    endif()
+  endforeach()
+endif()
+
+if(forbidden)
+  string(REPLACE ";" "\n  " pretty "${forbidden}")
+  message(FATAL_ERROR
+    "the serial console showed what it must not:\n  ${pretty}\n"
+    "what it did show:\n${serial}\n"
+    "QEMU result: ${rc}\n${err}")
+endif()
+
 list(LENGTH patterns n)
-message(STATUS "ok: booted and printed all ${n} expected lines")
+list(LENGTH refused m)
+message(STATUS "ok: booted, printed all ${n} expected lines, none of ${m} refused")

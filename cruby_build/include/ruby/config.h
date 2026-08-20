@@ -71,7 +71,7 @@
 #define HAVE_SYS_RESOURCE_H 1
 #define HAVE_SYS_SELECT_H 1
 #define HAVE_SYS_SENDFILE_H 1
-/* REMOVED: HAVE_SYS_SOCKET_H - no socket support */
+#define HAVE_SYS_SOCKET_H 1   /* ext/socket, and io.c's is_socket path */
 #define HAVE_SYS_SYSCALL_H 1
 /* REMOVED: HAVE_SYS_SYSMACROS_H */
 #define HAVE_SYS_TIME_H 1
@@ -388,7 +388,7 @@
 #define HAVE_SETRLIMIT 1
 #define HAVE_SETSID 1
 #define HAVE_SETUID 1
-/* REMOVED: HAVE_SHUTDOWN - no socket support */
+#define HAVE_SHUTDOWN 1       /* without it io.c turns shutdown() into 0 */
 #define HAVE_SIGACTION 1
 #define HAVE_SIGALTSTACK 1
 #define HAVE_SIGPROCMASK 1
