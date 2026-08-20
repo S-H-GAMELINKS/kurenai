@@ -38,6 +38,33 @@ uintptr_t memory_mapped_limit(void);
 /* Decimal, for the few places the kernel has to print a number. */
 void serial_put_uint(uint64_t value);
 
+/* Port I/O. Here rather than in one .c file because the PIT, the PCI
+ * configuration space and the Ruby side all need it, and because there is
+ * nothing to it: these are single instructions with an ABI. */
+static inline void outb(uint16_t port, uint8_t value)
+{
+    __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline uint8_t inb(uint16_t port)
+{
+    uint8_t value;
+    __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
+static inline void outl(uint16_t port, uint32_t value)
+{
+    __asm__ volatile ("outl %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline uint32_t inl(uint16_t port)
+{
+    uint32_t value;
+    __asm__ volatile ("inl %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
 /* The PicoRuby VM. It stays open for the life of the system, because the
  * syscall dispatcher runs in it. */
 void vm_start(void);

@@ -362,6 +362,17 @@ ExternalProject_Add(kernel
   STEP_TARGETS configure build
 )
 
+# The machine's network card, named once and used by every way of starting it.
+#
+# The MAC is stated rather than left to QEMU's default, which happens to be the
+# same value: a test that asserts an address should be asserting one this file
+# chose. User-mode networking needs no privileges and gives the guest
+# 10.0.2.15, a gateway at 10.0.2.2 and a DHCP server -- enough for a network
+# stack to come up without anything being configured by hand.
+set(QEMU_NIC
+  -netdev user,id=net0
+  -device e1000,netdev=net0,mac=52:54:00:12:34:56)
+
 # Boot it. Serial goes to stdio so the console is the terminal running this.
 if(QEMU_EXECUTABLE)
   add_custom_target(run
@@ -371,6 +382,7 @@ if(QEMU_EXECUTABLE)
             -serial stdio
             -display none
             -no-reboot
+            ${QEMU_NIC}
     DEPENDS kernel
     USES_TERMINAL
     COMMENT "Booting the kernel in QEMU")
@@ -467,12 +479,19 @@ if(QEMU_EXECUTABLE)
            # input. With no input the system sits at the prompt, which is
            # correct, so the summary printed after the REPL belongs to the
            # test that actually drives it.
+           # The e1000 line is evidence rather than decoration: printing an
+           # address means ruby/kernel/pci.rb found the card in configuration
+           # space through two port instructions, that its BAR was read
+           # correctly, and that e1000.rb drove the EEPROM read protocol --
+           # write the word address, wait for done, take the top half of the
+           # register -- from Ruby.
+           #
            # The socket lines say four separate things: the constant tables
            # mkconstants.rb generated survived the cross compile, uname(2)
            # answers so the server can name itself, musl resolves a numeric
            # address with no resolver behind it, and socket.rb was found in the
            # Ruby filesystem -- Addrinfo is defined there, not in the C half.
-           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|socket: TCPServer refused with Errno::ENOSYS|irb 1[.0-9]* loaded|irb\\(main\\):001"
+           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|socket: TCPServer refused with Errno::ENOSYS|irb 1[.0-9]* loaded|irb\\(main\\):001"
            # Nothing may reach rb_bug: CRuby's answer to an impossible libc
            # result is to abort, and it has no way to say so on this machine.
            # ThreadError likewise, because pthread_create refusing is a thing
@@ -482,6 +501,20 @@ if(QEMU_EXECUTABLE)
            # The kernel halts instead of exiting, so QEMU always runs for the
            # full timeout. Booting takes well under a second here; the margin
            # is for slower machines, and grows as the kernel does more.
+           -DSECONDS=5
+           -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/boot_serial.cmake)
+
+  # A machine with no network card still boots to a prompt. Worth its own check
+  # because the probe runs at boot, before CRuby: a kernel that only works when
+  # the hardware it looks for is present has made the hardware mandatory
+  # without meaning to.
+  add_test(NAME verify_kernel_boots_without_nic COMMAND ${CMAKE_COMMAND}
+           -DQEMU=${QEMU_EXECUTABLE}
+           -DKERNEL=${KERNEL_ELF}
+           -DNO_NIC=ON
+           "-DEXPECT=boot ok|e1000: no card|cruby init ok|irb\\(main\\):001"
+           "-DEXPECT_NONE=\\[BUG\\]|rb_bug|ThreadError"
+           -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial_no_nic.log
            -DSECONDS=5
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/boot_serial.cmake)
 

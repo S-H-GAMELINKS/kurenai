@@ -302,6 +302,37 @@ prim_poke64(mrb_state *mrb, mrb_value self)
     return mrb_nil_value();
 }
 
+/* Port I/O, which is the one thing a device driver written in Ruby cannot do
+ * for itself. Memory-mapped registers are already reachable through peek32 and
+ * poke32 -- the low 4GB is identity mapped, so a register at a physical
+ * address is that address -- but the PCI configuration space is not memory. It
+ * is a pair of ports: write which register you want to 0xCF8, read it from
+ * 0xCFC. Without these two the Ruby side cannot find a card to talk to.
+ *
+ * Only the 32-bit pair, because that is the width PCI configuration space is
+ * defined in. inb and outb exist in kernel.h for the PIT and can be exposed
+ * when something needs them. */
+static mrb_value
+prim_inl(mrb_state *mrb, mrb_value self)
+{
+    mrb_int port;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &port);
+    return mrb_int_value(mrb, (mrb_int)inl((uint16_t)port));
+}
+
+static mrb_value
+prim_outl(mrb_state *mrb, mrb_value self)
+{
+    mrb_int port, value;
+    (void)self;
+
+    mrb_get_args(mrb, "ii", &port, &value);
+    outl((uint16_t)port, (uint32_t)value);
+    return mrb_nil_value();
+}
+
 static mrb_value
 prim_halt(mrb_state *mrb, mrb_value self)
 {
@@ -352,6 +383,10 @@ bridge_init(mrb_state *mrb)
                                prim_peek64, MRB_ARGS_REQ(1));
     mrb_define_module_function(mrb, syscall_module, "poke64",
                                prim_poke64, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mrb, syscall_module, "inl",
+                               prim_inl, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, syscall_module, "outl",
+                               prim_outl, MRB_ARGS_REQ(2));
     mrb_define_module_function(mrb, syscall_module, "halt",
                                prim_halt, MRB_ARGS_NONE());
 }

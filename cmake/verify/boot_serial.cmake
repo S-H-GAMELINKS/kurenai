@@ -35,6 +35,26 @@ if(NOT DEFINED SECONDS)
   set(SECONDS 15)
 endif()
 
+# The machine has a network card. Spelled out here as well as in the run target
+# and in test/terminal_driver.rb, the same way -m 2048 is: each of the three
+# ways of starting this kernel builds its own command line, and a launcher that
+# quietly differs from the others is worse than the repetition.
+#
+# The MAC is stated rather than left to QEMU's default so that the boot check
+# is asserting an address this project chose.
+set(QEMU_NIC
+    -netdev user,id=net0
+    -device e1000,netdev=net0,mac=52:54:00:12:34:56)
+
+# With NO_NIC, the machine has none. QEMU's pc machine adds an e1000 of its own
+# unless told otherwise, so "leave the arguments out" does not describe a
+# machine without a card -- which is why this is a flag rather than an absence.
+if(DEFINED NO_NIC)
+  set(QEMU_NIC -nic none)
+endif()
+
+string(JOIN " " QEMU_NIC_ARGS ${QEMU_NIC})
+
 file(REMOVE "${LOG}")
 
 if(DEFINED INPUT)
@@ -45,7 +65,7 @@ if(DEFINED INPUT)
   # needs a shell; this project is Linux-only and already requires one.
   execute_process(
     COMMAND sh -c
-            "(sleep ${INPUT_DELAY}; cat '${INPUT}') | '${QEMU}' -kernel '${KERNEL}' -m 2048 -serial stdio -display none -no-reboot > '${LOG}' 2>&1"
+            "(sleep ${INPUT_DELAY}; cat '${INPUT}') | '${QEMU}' -kernel '${KERNEL}' -m 2048 -serial stdio -display none -no-reboot ${QEMU_NIC_ARGS} > '${LOG}' 2>&1"
     TIMEOUT ${SECONDS}
     RESULT_VARIABLE rc
     OUTPUT_VARIABLE out
@@ -58,6 +78,7 @@ else()
             -serial file:${LOG}
             -display none
             -no-reboot
+            ${QEMU_NIC}
     TIMEOUT ${SECONDS}
     RESULT_VARIABLE rc
     OUTPUT_VARIABLE out

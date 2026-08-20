@@ -21,3 +21,9 @@ puts "memory: arena #{Kernel::Memory.free_bytes / (1024 * 1024)} MB free"
 # than on first use keeps a failure at boot, where it is visible.
 Kernel::VFS.build
 puts "vfs: #{Kernel::VFS.paths.length} files"
+
+# Find the network card, if the machine has one. Done here rather than on first
+# use for the same reason the filesystem table is: a syscall handler is the
+# wrong place to discover the hardware, and a failure at boot is visible.
+Kernel::E1000.probe
+Kernel::E1000.report
