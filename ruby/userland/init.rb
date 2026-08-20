@@ -60,23 +60,37 @@ begin
   # the bind, the listen, the accept and the wait are the Ruby kernel's, the TCP
   # is lwIP's, and the frames are carried by a driver written in Ruby.
   #
-  # It runs for a couple of seconds and then gives way to irb, because a kernel
-  # that stops at a blocking accept is a kernel that only boots when somebody
-  # connects. WEBrick will take this over and keep it.
+  # It serves until somebody types something. A time limit was tried first and
+  # was wrong: it made a server that could only be reached by a program fast
+  # enough to catch the window, which is to say not by hand -- and a web server
+  # nobody can visit is not one. But a blocking accept with no way out would
+  # mean irb was only reachable on a machine with no network, so the console is
+  # watched alongside the listener.
   #
-  # IO.select is here rather than a bare accept on purpose. It lowers to
-  # select(2) where accept lowers to poll, and WEBrick's own accept loop uses
-  # select -- so the thing that has to work later is the thing being used here.
+  # Watching both with one select is also exactly the shape WEBrick's accept
+  # loop has, where the second descriptor is its shutdown pipe. And IO.select
+  # rather than a bare accept is deliberate: it lowers to select(2) where accept
+  # lowers to poll, so the call that has to work later is the one being used
+  # here.
   server = TCPServer.new("0.0.0.0", 80)
-  puts "http: listening on #{server.local_address.ip_address}:" \
-       "#{server.local_address.ip_port}"
+  puts "http: serving on #{server.local_address.ip_address}:" \
+       "#{server.local_address.ip_port}, press Enter for irb"
 
   body = "hello from a Ruby kernel\n"
   served = 0
-  deadline = Time.now + 2
 
-  while Time.now < deadline
-    next unless IO.select([server], nil, nil, 0.2)
+  loop do
+    ready = IO.select([server, STDIN], nil, nil, 0.5)
+    next unless ready
+
+    if ready[0].include?(STDIN)
+      # Take the keystroke, so Reline does not find it waiting for it.
+      begin
+        STDIN.read_nonblock(64)
+      rescue IO::WaitReadable, EOFError
+      end
+      break
+    end
 
     client = server.accept
     request = client.gets.to_s.strip

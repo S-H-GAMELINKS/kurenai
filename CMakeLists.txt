@@ -578,19 +578,18 @@ if(QEMU_EXECUTABLE)
            # does not cover is a connection actually arriving, which is what
            # CRuby's own TCPServer will be asked to do next.
            #
-           # The http lines are CRuby's own TCPServer: a descriptor, a bind,
-           # a listen and an IO.select, all serviced by the Ruby kernel. Zero
-           # requests is the right answer here -- nothing connects in this
-           # check -- and it is still worth asserting, because it says the
-           # server opened, waited and gave way rather than stopping at a
-           # blocking accept.
+           # The http line is CRuby's own TCPServer: a descriptor, a bind, a
+           # listen and an IO.select, all serviced by the Ruby kernel. It is the
+           # last line this check looks for, because the kernel stays there --
+           # it is a web server, and irb is behind a keystroke now. Which is
+           # what verify_irb sends.
            #
            # The socket lines say three separate things: the constant tables
            # mkconstants.rb generated survived the cross compile, uname(2)
            # answers so the server can name itself, musl resolves a numeric
            # address with no resolver behind it, and socket.rb was found in the
            # Ruby filesystem -- Addrinfo is defined there, not in the C half.
-           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|http: listening on 0[.]0[.]0[.]0:80|http: served 0 requests|irb 1[.0-9]* loaded|irb\\(main\\):001"
+           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|http: serving on 0[.]0[.]0[.]0:80"
            # Nothing may reach rb_bug: CRuby's answer to an impossible libc
            # result is to abort, and it has no way to say so on this machine.
            # ThreadError likewise, because pthread_create refusing is a thing
@@ -599,10 +598,8 @@ if(QEMU_EXECUTABLE)
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial.log
            # The kernel halts instead of exiting, so QEMU always runs for the
            # full timeout. Booting takes well under a second here; the margin
-           # is for slower machines, and grows as the kernel does more -- the
-           # HTTP demo alone waits two seconds for a connection before giving
-           # way to irb.
-           -DSECONDS=10
+           # is for slower machines, and grows as the kernel does more.
+           -DSECONDS=8
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/boot_serial.cmake)
 
   # A machine with no network card still boots to a prompt. Worth its own check
@@ -641,8 +638,10 @@ if(QEMU_EXECUTABLE)
            # kernel's 80, and unlikely to be in use by anything else.
            --port 18080
            --requests 2
+           # What ruby/userland/init.rb prints when the listener is open. The
+           # forward is refused until then, so knocking early fails.
+           --ready "http: serving"
            --expect "hello from a Ruby kernel"
-           --until "http: served"
            --seconds 45)
 
   # Drives irb through a stand-in terminal, exercising the three things that
@@ -658,9 +657,13 @@ if(QEMU_EXECUTABLE)
            -DKERNEL=${KERNEL_ELF}
            -DINPUT=${CMAKE_SOURCE_DIR}/test/irb_session.txt
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/irb_session.log
-           # irb loads 200-odd files through the VFS before the first prompt,
-           # and the HTTP demo waits two seconds before that.
+           # irb loads 200-odd files through the VFS before the first prompt.
            -DSECONDS=60
+           # The kernel is serving when it comes up and stays there. This is
+           # the knock that asks for irb instead -- and it doubles as a check
+           # that the console is still watched while the server runs, which is
+           # the whole reason irb is reachable on a machine with a network.
+           -DWAKE=http:.serving
            # No space: an escaped one does not survive the trip to the driver.
            -DUNTIL=irb.finished
                       # Character classes rather than backslash escapes: CMake's regular

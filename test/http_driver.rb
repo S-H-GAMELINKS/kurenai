@@ -6,13 +6,14 @@
 # than a shell script with a sleep in it.
 #
 #   ruby http_driver.rb --qemu QEMU --kernel ELF --log FILE --port N
-#                       [--requests N] [--expect TEXT] [--seconds N]
-#                       [--until PATTERN]
+#                       [--ready PATTERN] [--requests N] [--expect TEXT]
+#                       [--seconds N] [--until PATTERN]
 
 require "optparse"
 require "net/http"
 
-options = { seconds: 60, requests: 2, port: 18080, expect: nil }
+options = { seconds: 60, requests: 2, port: 18080, expect: nil,
+            ready: "http: serving" }
 OptionParser.new do |o|
   o.on("--qemu PATH")     { |v| options[:qemu] = v }
   o.on("--kernel PATH")   { |v| options[:kernel] = v }
@@ -20,6 +21,11 @@ OptionParser.new do |o|
   o.on("--port N")        { |v| options[:port] = v.to_i }
   o.on("--requests N")    { |v| options[:requests] = v.to_i }
   o.on("--expect TEXT")   { |v| options[:expect] = v }
+  # What the kernel prints when it is ready to be asked. An option rather than
+  # a constant because it is a promise between two files, and the last time it
+  # was written into this one, changing the wording in the other made the test
+  # wait forty-five seconds and report nothing.
+  o.on("--ready PATTERN") { |v| options[:ready] = v }
   o.on("--seconds N")     { |v| options[:seconds] = v.to_i }
   o.on("--until PATTERN") { |v| options[:until] = v }
 end.parse!
@@ -72,7 +78,7 @@ IO.popen(qemu_command, "r+") do |qemu|
 
       # The kernel says when it is ready. Anything before that would be
       # refused, because slirp only forwards to a guest that is listening.
-      listening ||= transcript.include?("http: listening")
+      listening ||= transcript.include?(options[:ready])
 
       if listening && asked < options[:requests]
         asked += 1
@@ -84,6 +90,9 @@ IO.popen(qemu_command, "r+") do |qemu|
         end
       end
 
+      # Enough is enough. The kernel serves until it is told to stop, so there
+      # is no line to wait for -- having the answers is the end of the test.
+      break if responses.length + failures.length >= options[:requests]
       break if options[:until] && transcript.match?(Regexp.new(options[:until]))
     end
   ensure
@@ -94,6 +103,9 @@ end
 File.write(options[:log], transcript)
 
 problems = failures.dup
+unless transcript.include?(options[:ready])
+  problems << "the kernel never printed #{options[:ready].inspect}"
+end
 if responses.length < options[:requests]
   problems << "only #{responses.length} of #{options[:requests]} requests answered"
 end

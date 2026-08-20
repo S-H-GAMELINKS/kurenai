@@ -22,6 +22,10 @@ OptionParser.new do |o|
   o.on("--input PATH")   { |v| options[:input] = v }
   o.on("--seconds N")    { |v| options[:seconds] = v.to_i }
   o.on("--until PATTERN"){ |v| options[:until] = v }
+  # The kernel boots into its web server and stays there. Anything on the
+  # console stops it, which is how irb is reached at all -- so a test that wants
+  # irb has to knock first.
+  o.on("--wake PATTERN")  { |v| options[:wake] = v }
 end.parse!
 
 %i[qemu kernel log input].each do |key|
@@ -53,6 +57,7 @@ IO.popen([options[:qemu],
   answered = 0
   sent = 0
   prompt_seen = false
+  woken = options[:wake].nil?
 
   begin
     while Time.now < deadline
@@ -75,6 +80,15 @@ IO.popen([options[:qemu],
         qemu.flush
         answered += 1
         $answered_count = answered
+      end
+
+      # Knock once, when the kernel says it is serving. Until then there is no
+      # prompt to wait for: it is in an accept loop, and the only thing that
+      # ends one is input.
+      if !woken && transcript.match?(Regexp.new(options[:wake]))
+        qemu.write("\n")
+        qemu.flush
+        woken = true
       end
 
       # Feed the script once irb is up, one line at a time so each is read as

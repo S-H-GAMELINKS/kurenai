@@ -1,5 +1,6 @@
 # cmake -DRUBY=<ruby> -DDRIVER=<terminal_driver.rb> -DQEMU=<qemu> -DKERNEL=<elf>
 #       -DINPUT=<file> -DLOG=<file> -DEXPECT=<a|b|c> [-DSECONDS=n] [-DUNTIL=re]
+#       [-DWAKE=re]
 #       -P irb_session.cmake
 #
 # Drives irb through a stand-in terminal and checks what came back.
@@ -23,6 +24,11 @@ endif()
 set(driver_args ${DRIVER}
     --qemu ${QEMU} --kernel ${KERNEL} --log ${LOG} --input ${INPUT}
     --seconds ${SECONDS})
+# The kernel boots into its web server and stays there, so a test that wants
+# irb has to say so first. Anything on the console ends the accept loop.
+if(DEFINED WAKE)
+  list(APPEND driver_args --wake ${WAKE})
+endif()
 if(DEFINED UNTIL)
   list(APPEND driver_args --until ${UNTIL})
 endif()
