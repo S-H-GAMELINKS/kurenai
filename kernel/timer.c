@@ -18,18 +18,6 @@
 static uint64_t tsc_per_ms;
 static uint64_t tsc_at_boot;
 
-static inline void outb(uint16_t port, uint8_t value)
-{
-    __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-static inline uint8_t inb(uint16_t port)
-{
-    uint8_t value;
-    __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
 static inline uint64_t rdtsc(void)
 {
     uint32_t lo, hi;

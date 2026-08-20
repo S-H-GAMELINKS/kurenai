@@ -38,12 +38,18 @@ deadline = Time.now + options[:seconds]
 CURSOR_REPORT = "\e[1;1R"
 CURSOR_QUERY = "\e[6n"
 
+# The network card is spelled out here as well as in the run target and in
+# cmake/verify/boot_serial.cmake, the same way -m 2048 is: each way of starting
+# this kernel builds its own command line, and a launcher that quietly differs
+# from the others is worse than the repetition.
 IO.popen([options[:qemu],
           "-kernel", options[:kernel],
           "-m", "2048",
           "-serial", "stdio",
           "-display", "none",
-          "-no-reboot"], "r+") do |qemu|
+          "-no-reboot",
+          "-netdev", "user,id=net0",
+          "-device", "e1000,netdev=net0,mac=52:54:00:12:34:56"], "r+") do |qemu|
   answered = 0
   sent = 0
   prompt_seen = false

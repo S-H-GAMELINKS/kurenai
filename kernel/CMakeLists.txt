@@ -52,6 +52,8 @@ set(KERNEL_RUBY
   ${RUBY_DIR}/kernel/vfs.rb
   ${RUBY_DIR}/kernel/fd.rb
   ${RUBY_DIR}/kernel/tty.rb
+  ${RUBY_DIR}/kernel/pci.rb
+  ${RUBY_DIR}/kernel/e1000.rb
   ${RUBY_DIR}/kernel/syscall.rb)
 
 set(SYSCALL_BYTECODE ${CMAKE_CURRENT_BINARY_DIR}/syscall_bytecode.c)
