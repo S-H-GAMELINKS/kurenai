@@ -70,6 +70,51 @@ module Kernel
       Syscall.net_bound?
     end
 
+    # ---------------------------------------------------------------- sockets
+    #
+    # picoruby-socket's port layer, one call away. These are thin on purpose:
+    # the socket policy -- descriptors, errno, what a read of a closed
+    # connection means -- belongs in the syscall layer, and this is the
+    # mechanism it will be written against.
+    #
+    # Handles are pointers, carried as Integers. Nothing dereferences them on
+    # this side.
+    WOULD_BLOCK = -2
+
+    def self.listen(port, backlog)
+      Syscall.socket_listen(port, backlog)
+    end
+
+    def self.accept(server)
+      Syscall.socket_accept(server)
+    end
+
+    # The payload never becomes a Ruby object: lwIP copies it straight to the
+    # address named here, which for a read syscall is CRuby's own buffer.
+    def self.recv(socket, address, length)
+      Syscall.socket_recv(socket, address, length)
+    end
+
+    def self.send(socket, address, length)
+      Syscall.socket_send(socket, address, length)
+    end
+
+    def self.readable?(socket)
+      Syscall.socket_readable?(socket)
+    end
+
+    def self.closed?(socket)
+      Syscall.socket_closed?(socket)
+    end
+
+    def self.close(socket)
+      Syscall.socket_close(socket)
+    end
+
+    def self.close_server(server)
+      Syscall.socket_close_server(server)
+    end
+
     def self.dotted(address)
       "#{(address >> 24) & 0xFF}.#{(address >> 16) & 0xFF}." \
         "#{(address >> 8) & 0xFF}.#{address & 0xFF}"
@@ -85,6 +130,22 @@ module Kernel
         i -= 1
       end
       bits
+    end
+
+    # Proof that the socket layer underneath is wired up, without waiting for
+    # anyone to connect. Creating a listener means a pcb was allocated, bound
+    # and put into listen; accept returning nil means the accept callback is
+    # installed and has simply not fired. Both are things that would otherwise
+    # only be discovered once CRuby was on top of them.
+    def self.listener_check(port)
+      server = listen(port, 1)
+      return "failed" if server.nil?
+
+      pump
+      pending = accept(server)
+      close(pending) if pending
+      close_server(server)
+      pending ? "one waiting" : "idle"
     end
 
     def self.report
@@ -106,6 +167,7 @@ module Kernel
       puts "net: #{dotted(Syscall.net_address)}/" \
            "#{prefix_length(Syscall.net_netmask)} " \
            "gw #{dotted(Syscall.net_gateway)} up#{note}"
+      puts "net: tcp listener #{listener_check(80)}"
     end
   end
 end
