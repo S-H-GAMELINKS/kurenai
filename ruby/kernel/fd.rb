@@ -58,11 +58,59 @@ module Kernel
       [read_end, write_end]
     end
 
+    # A socket, before it has anything to talk to. socket(2) creates the
+    # descriptor; bind and listen are separate calls that arrive later, and
+    # lwIP's raw API separates them the same way -- a pcb is made, then bound,
+    # then listened on. So the handle stays nil until there is one.
+    def self.open_socket
+      number = next_number
+      return nil unless number
+
+      TABLE[number] = {
+        socket: true,
+        handle: nil,      # picoruby-socket's pointer, once there is one
+        listening: false,
+        ip: 0,            # what bind was told
+        port: 0,
+        eof: false        # a read has already seen the connection end
+      }
+      number
+    end
+
+    # An accepted connection. It arrives already connected, which is why this
+    # takes a handle where open_socket does not.
+    def self.adopt_socket(handle)
+      number = next_number
+      return nil unless number
+
+      TABLE[number] = {
+        socket: true,
+        handle: handle,
+        listening: false,
+        ip: 0,
+        port: 0,
+        eof: false
+      }
+      number
+    end
+
+    def self.socket?(number)
+      entry = TABLE[number]
+      !entry.nil? && entry[:socket] == true
+    end
+
     def self.entry(number)
       TABLE[number]
     end
 
     def self.close(number)
+      entry = TABLE[number]
+      return false if entry.nil?
+
+      if entry[:socket] && entry[:handle]
+        entry[:listening] ? Net.close_server(entry[:handle])
+                          : Net.close(entry[:handle])
+      end
       !TABLE.delete(number).nil?
     end
 
@@ -77,6 +125,7 @@ module Kernel
     def self.read(number, buffer, count)
       file = TABLE[number]
       return nil unless file
+      return read_socket(file, buffer, count) if file[:socket]
       return read_pipe(file, buffer, count) if file[:pipe]
 
       remaining = file[:size] - file[:offset]
@@ -85,6 +134,53 @@ module Kernel
       Syscall.copy_out(buffer, file[:address] + file[:offset], length) if length > 0
       file[:offset] += length
       length
+    end
+
+    # Straight from lwIP's buffer into the caller's, in C. The bytes do not
+    # become an mruby object on the way, which is the same rule the filesystem
+    # follows and matters more here: a response body is larger than a path, and
+    # the VM's pool is 8MB.
+    #
+    # :empty rather than 0 for "nothing yet", because 0 is end of file and a
+    # connection that is merely quiet has not ended. Once it has, the entry
+    # remembers -- lwIP forgets a closed pcb, and a second read has to give the
+    # same answer as the first.
+    def self.read_socket(file, buffer, count)
+      return 0 if file[:eof]
+      return :empty if file[:handle].nil?
+
+      Net.pump
+      length = Net.recv(file[:handle], buffer, count)
+      return :empty if length == Net::WOULD_BLOCK
+      return nil if length < 0
+
+      file[:eof] = true if length == 0
+      length
+    end
+
+    # A partial write is allowed and is what happens with a large body: lwIP
+    # takes what fits in its send buffer and the caller comes back for the rest,
+    # which is exactly what write(2) promises and what CRuby's write loop
+    # expects. Sending nothing is :full rather than 0, for the same reason a
+    # quiet read is :empty.
+    def self.write_socket(number, buffer, count)
+      file = TABLE[number]
+      return nil unless file && file[:socket]
+      return :full if file[:handle].nil?
+
+      room = Net.sendable(file[:handle])
+      return :full if room == 0
+
+      length = count < room ? count : room
+      written = Net.send(file[:handle], buffer, length)
+      return nil if written < 0
+      return :full if written == 0
+
+      # Push it out now rather than at the next syscall. Waiting would leave a
+      # complete response sitting in a queue until something else happened to
+      # need the network.
+      Net.pump
+      written
     end
 
     def self.read_pipe(file, buffer, count)

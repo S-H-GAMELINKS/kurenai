@@ -99,6 +99,28 @@ module Kernel
       Syscall.socket_send(socket, address, length)
     end
 
+    # How much lwIP will take right now. The write path needs it to size a
+    # partial write, and poll needs it to answer whether a socket is writable.
+    def self.sendable(socket)
+      Syscall.socket_sendable(socket)
+    end
+
+    def self.peer_ip(socket)
+      Syscall.socket_peer_ip(socket)
+    end
+
+    def self.peer_port(socket)
+      Syscall.socket_peer_port(socket)
+    end
+
+    def self.local_ip(socket)
+      Syscall.socket_local_ip(socket)
+    end
+
+    def self.local_port(socket)
+      Syscall.socket_local_port(socket)
+    end
+
     def self.readable?(socket)
       Syscall.socket_readable?(socket)
     end

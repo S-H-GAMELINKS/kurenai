@@ -58,6 +58,31 @@ kernel_main(void)
     bridge_route(293 /* SYS_pipe2  */);
     bridge_route(9   /* SYS_mmap   */);
     bridge_route(11  /* SYS_munmap */);
+
+    /* Sockets. accept is not routed and does not need to be: ext/socket's
+     * cloexec_accept always passes SOCK_CLOEXEC|SOCK_NONBLOCK, and musl only
+     * falls back to accept(2) when the flags are zero -- so accept4 is the
+     * whole of the accept path. If that ever stops being true, the console
+     * says "unhandled syscall 43" rather than misbehaving quietly.
+     *
+     * connect, sendto and recvfrom are likewise absent. They are the client
+     * and datagram paths, and a server needs neither; reads and writes on a
+     * connection arrive as read, write and writev. */
+    bridge_route(41  /* SYS_socket      */);
+    bridge_route(49  /* SYS_bind        */);
+    bridge_route(50  /* SYS_listen      */);
+    bridge_route(288 /* SYS_accept4     */);
+    bridge_route(51  /* SYS_getsockname */);
+    bridge_route(52  /* SYS_getpeername */);
+    bridge_route(54  /* SYS_setsockopt  */);
+    bridge_route(55  /* SYS_getsockopt  */);
+    bridge_route(48  /* SYS_shutdown    */);
+
+    /* Waiting. poll is what CRuby retries a would-block read with; select is
+     * what IO.select lowers to, which is how a server watches several
+     * listeners at once. Both had to exist before either was useful. */
+    bridge_route(23  /* SYS_select   */);
+    bridge_route(270 /* SYS_pselect6 */);
     serial_puts("syscall routing ok\n");
 
     cruby_start();

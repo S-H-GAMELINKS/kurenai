@@ -491,6 +491,31 @@ add_test(NAME verify_cruby_cross COMMAND ${CMAKE_COMMAND}
          -DLLVM_NM=${LLVM_NM_EXECUTABLE}
          -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/cruby_cross.cmake)
 
+# Every Ruby file that goes into the image, parsed before anything is built.
+# The kernel's Ruby is compiled by picorbc, so a mistake there is already a
+# build error; the userland script is embedded as a string and evaluated at
+# boot, where a syntax error becomes a page fault inside CRuby's exception
+# machinery with no output at all.
+set(IMAGE_RUBY
+  ${CMAKE_SOURCE_DIR}/ruby/userland/init.rb
+  ${CMAKE_SOURCE_DIR}/ruby/kernel/vfs.rb
+  ${CMAKE_SOURCE_DIR}/ruby/kernel/fd.rb
+  ${CMAKE_SOURCE_DIR}/ruby/kernel/tty.rb
+  ${CMAKE_SOURCE_DIR}/ruby/kernel/pci.rb
+  ${CMAKE_SOURCE_DIR}/ruby/kernel/e1000.rb
+  ${CMAKE_SOURCE_DIR}/ruby/kernel/arp.rb
+  ${CMAKE_SOURCE_DIR}/ruby/kernel/net.rb
+  ${CMAKE_SOURCE_DIR}/ruby/kernel/poll.rb
+  ${CMAKE_SOURCE_DIR}/ruby/kernel/sockets.rb
+  ${CMAKE_SOURCE_DIR}/ruby/kernel/syscall.rb
+  ${CMAKE_SOURCE_DIR}/ruby/kernel/boot.rb)
+string(JOIN "|" IMAGE_RUBY_ARG ${IMAGE_RUBY})
+
+add_test(NAME verify_ruby_syntax COMMAND ${CMAKE_COMMAND}
+         -DRUBY=${RUBY_EXECUTABLE}
+         "-DFILES=${IMAGE_RUBY_ARG}"
+         -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/ruby_syntax.cmake)
+
 add_test(NAME verify_cruby_socket COMMAND ${CMAKE_COMMAND}
          -DARCHIVE=${CRUBY_LIB}
          -DLLVM_NM=${LLVM_NM_EXECUTABLE}
@@ -538,12 +563,19 @@ if(QEMU_EXECUTABLE)
            # does not cover is a connection actually arriving, which is what
            # CRuby's own TCPServer will be asked to do next.
            #
-           # The socket lines say four separate things: the constant tables
+           # The http lines are CRuby's own TCPServer: a descriptor, a bind,
+           # a listen and an IO.select, all serviced by the Ruby kernel. Zero
+           # requests is the right answer here -- nothing connects in this
+           # check -- and it is still worth asserting, because it says the
+           # server opened, waited and gave way rather than stopping at a
+           # blocking accept.
+           #
+           # The socket lines say three separate things: the constant tables
            # mkconstants.rb generated survived the cross compile, uname(2)
            # answers so the server can name itself, musl resolves a numeric
            # address with no resolver behind it, and socket.rb was found in the
            # Ruby filesystem -- Addrinfo is defined there, not in the C half.
-           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|socket: TCPServer refused with Errno::ENOSYS|irb 1[.0-9]* loaded|irb\\(main\\):001"
+           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|http: listening on 0[.]0[.]0[.]0:80|http: served 0 requests|irb 1[.0-9]* loaded|irb\\(main\\):001"
            # Nothing may reach rb_bug: CRuby's answer to an impossible libc
            # result is to abort, and it has no way to say so on this machine.
            # ThreadError likewise, because pthread_create refusing is a thing
@@ -552,8 +584,10 @@ if(QEMU_EXECUTABLE)
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial.log
            # The kernel halts instead of exiting, so QEMU always runs for the
            # full timeout. Booting takes well under a second here; the margin
-           # is for slower machines, and grows as the kernel does more.
-           -DSECONDS=5
+           # is for slower machines, and grows as the kernel does more -- the
+           # HTTP demo alone waits two seconds for a connection before giving
+           # way to irb.
+           -DSECONDS=10
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/boot_serial.cmake)
 
   # A machine with no network card still boots to a prompt. Worth its own check
@@ -564,11 +598,37 @@ if(QEMU_EXECUTABLE)
            -DQEMU=${QEMU_EXECUTABLE}
            -DKERNEL=${KERNEL_ELF}
            -DNO_NIC=ON
-           "-DEXPECT=boot ok|e1000: no card|arp: no card|net: no card|cruby init ok|irb\\(main\\):001"
+           # Errno::ENETDOWN rather than a crash or a hang: a machine with no
+           # card cannot listen, and saying so is the whole of what a socket
+           # layer owes a caller in that situation.
+           "-DEXPECT=boot ok|e1000: no card|arp: no card|net: no card|cruby init ok|socket failed: Errno::ENETDOWN|irb\\(main\\):001"
            "-DEXPECT_NONE=\\[BUG\\]|rb_bug|ThreadError"
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial_no_nic.log
            -DSECONDS=5
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/boot_serial.cmake)
+
+  # The whole stack, end to end, from outside the machine: a request made by
+  # this process is answered by CRuby's TCPServer running on a kernel whose
+  # socket policy is Ruby, whose TCP is lwIP, and whose network card is driven
+  # by Ruby.
+  #
+  # The driver watches the console and knocks the moment the kernel says it is
+  # listening, because the demo gives way to irb after a couple of seconds and
+  # user-mode networking refuses a forward to a guest that is not listening
+  # yet. Boot, sleep and hope would be a test that passes for the wrong reason
+  # about as often as it fails for one.
+  add_test(NAME verify_http COMMAND ${RUBY_EXECUTABLE}
+           ${CMAKE_SOURCE_DIR}/test/http_driver.rb
+           --qemu ${QEMU_EXECUTABLE}
+           --kernel ${KERNEL_ELF}
+           --log ${CMAKE_CURRENT_BINARY_DIR}/http_session.log
+           # Not 8080: an unprivileged port on the host, forwarded to the
+           # kernel's 80, and unlikely to be in use by anything else.
+           --port 18080
+           --requests 2
+           --expect "hello from a Ruby kernel"
+           --until "http: served"
+           --seconds 45)
 
   # Drives irb through a stand-in terminal, exercising the three things that
   # separate this from the dumb terminal irb started out on. The session types
@@ -583,7 +643,8 @@ if(QEMU_EXECUTABLE)
            -DKERNEL=${KERNEL_ELF}
            -DINPUT=${CMAKE_SOURCE_DIR}/test/irb_session.txt
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/irb_session.log
-           # irb loads 200-odd files through the VFS before the first prompt.
+           # irb loads 200-odd files through the VFS before the first prompt,
+           # and the HTTP demo waits two seconds before that.
            -DSECONDS=60
            # No space: an escaped one does not survive the trip to the driver.
            -DUNTIL=irb.finished

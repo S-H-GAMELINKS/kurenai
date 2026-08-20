@@ -56,12 +56,41 @@ begin
   puts "socket: AF_INET #{Socket::AF_INET}, SOMAXCONN #{Socket::SOMAXCONN}"
   puts "socket: hostname #{Socket.gethostname}"
   puts "socket: Addrinfo #{Addrinfo.tcp("10.0.2.15", 80).inspect}"
-  begin
-    TCPServer.new("0.0.0.0", 8080)
-    puts "socket: TCPServer opened, which cannot be right yet"
-  rescue SystemCallError => e
-    puts "socket: TCPServer refused with #{e.class}"
+  # A server, with nothing above it. Plain CRuby, unmodified: the descriptor,
+  # the bind, the listen, the accept and the wait are the Ruby kernel's, the TCP
+  # is lwIP's, and the frames are carried by a driver written in Ruby.
+  #
+  # It runs for a couple of seconds and then gives way to irb, because a kernel
+  # that stops at a blocking accept is a kernel that only boots when somebody
+  # connects. WEBrick will take this over and keep it.
+  #
+  # IO.select is here rather than a bare accept on purpose. It lowers to
+  # select(2) where accept lowers to poll, and WEBrick's own accept loop uses
+  # select -- so the thing that has to work later is the thing being used here.
+  server = TCPServer.new("0.0.0.0", 80)
+  puts "http: listening on #{server.local_address.ip_address}:" \
+       "#{server.local_address.ip_port}"
+
+  body = "hello from a Ruby kernel\n"
+  served = 0
+  deadline = Time.now + 2
+
+  while Time.now < deadline
+    next unless IO.select([server], nil, nil, 0.2)
+
+    client = server.accept
+    request = client.gets.to_s.strip
+    puts "http: #{request} from #{client.peeraddr[3]}"
+    client.write("HTTP/1.1 200 OK\r\n" \
+                 "Content-Type: text/plain\r\n" \
+                 "Content-Length: #{body.bytesize}\r\n" \
+                 "Connection: close\r\n\r\n#{body}")
+    client.close
+    served += 1
   end
+
+  server.close
+  puts "http: served #{served} requests"
 rescue Exception => e
   puts "socket failed: #{e.class}: #{e.message}"
   puts e.backtrace.first(8).join("\n") if e.backtrace
