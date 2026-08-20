@@ -35,6 +35,17 @@ module Kernel
     NR_WRITEV    = 20
     NR_PIPE2     = 293
     NR_OPENAT    = 257
+    NR_SELECT     = 23
+    NR_PSELECT6   = 270
+    NR_SOCKET     = 41
+    NR_SHUTDOWN   = 48
+    NR_BIND       = 49
+    NR_LISTEN     = 50
+    NR_GETSOCKNAME = 51
+    NR_GETPEERNAME = 52
+    NR_SETSOCKOPT = 54
+    NR_GETSOCKOPT = 55
+    NR_ACCEPT4    = 288
 
     EBADF  = -9
     EAGAIN = -11
@@ -59,6 +70,7 @@ module Kernel
     S_IFDIR  = 0o040000
     S_IFCHR  = 0o020000
     S_IFIFO  = 0o010000
+    S_IFSOCK = 0o140000
 
     # Always returns an Integer: negative is -errno, as the caller expects.
     # Never nil, and never an exception -- there is nobody above to catch one.
@@ -83,6 +95,17 @@ module Kernel
       when NR_PIPE, NR_PIPE2 then sys_pipe(a1)
       when NR_MMAP   then sys_mmap(a2, a5, a6)
       when NR_MUNMAP then sys_munmap(a1, a2)
+      when NR_SELECT   then sys_select(a1, a2, a3, a4, a5)
+      when NR_PSELECT6 then sys_pselect6(a1, a2, a3, a4, a5)
+      when NR_SOCKET       then Sockets.sys_socket(a1, a2, a3)
+      when NR_BIND         then Sockets.sys_bind(a1, a2, a3)
+      when NR_LISTEN       then Sockets.sys_listen(a1, a2)
+      when NR_ACCEPT4      then Sockets.sys_accept4(a1, a2, a3, a4)
+      when NR_GETSOCKNAME  then Sockets.sys_getsockname(a1, a2, a3)
+      when NR_GETPEERNAME  then Sockets.sys_getpeername(a1, a2, a3)
+      when NR_SETSOCKOPT   then Sockets.sys_setsockopt(a1, a2, a3, a4, a5)
+      when NR_GETSOCKOPT   then Sockets.sys_getsockopt(a1, a2, a3, a4, a5)
+      when NR_SHUTDOWN     then Sockets.sys_shutdown(a1, a2)
       else ENOSYS
       end
     end
@@ -97,6 +120,13 @@ module Kernel
         return count(count)
       end
 
+      if FD.socket?(fd)
+        written = FD.write_socket(fd, buffer, count)
+        return EBADF if written.nil?
+        return EAGAIN if written == :full
+        return written
+      end
+
       written = FD.write_pipe(fd, buffer, count)
       written.nil? ? EBADF : written
     end
@@ -104,9 +134,16 @@ module Kernel
     # musl's stdio flushes through writev, not write, so this is the one that
     # actually carries CRuby's output. The iovec array is walked here, in Ruby,
     # reading CRuby's memory a field at a time.
+    # The iovec array is walked here, in Ruby, reading CRuby's memory a field at
+    # a time.
+    #
+    # Every entry goes through sys_write, which is what lets a socket be written
+    # this way -- and it has to be, because CRuby has HAVE_WRITEV and buffered
+    # writes come through here rather than through write. Walking stops at the
+    # first short or refused entry and reports what did go, which is what
+    # writev(2) promises; carrying on would put the tail of a response ahead of
+    # the part that has not been sent.
     def self.sys_writev(fd, iov, iovcnt)
-      return EBADF unless fd == FD::CONSOLE_OUT || fd == FD::CONSOLE_ERR
-
       total = 0
       i = 0
       while i < iovcnt
@@ -114,12 +151,15 @@ module Kernel
         base = peek64(entry)
         len = peek64(entry + 8)
         if len > 0
-          serial_write(base, len)
-          total += len
+          written = sys_write(fd, base, len)
+          return written if written < 0 && total == 0
+          break if written < 0
+          total += written
+          break if written < len
         end
         i += 1
       end
-      count(total)
+      total
     end
 
     # ---------------------------------------------------------------- files
@@ -248,6 +288,16 @@ module Kernel
         return 0
       end
 
+      # CRuby decides whether IO#close_read and IO#close_write should shut a
+      # descriptor down by asking fstat and testing S_ISSOCK, and treats a
+      # failed fstat as fatal. So this answer is load-bearing rather than
+      # decorative.
+      if file[:socket]
+        poke64(address + STAT_MODE, S_IFSOCK | 0o600)
+        poke64(address + STAT_BLKSIZE, 4096)
+        return 0
+      end
+
       poke64(address + STAT_MODE, S_IFREG | 0o444)
       poke64(address + STAT_ST_SIZE, file[:size])
       poke64(address + STAT_BLKSIZE, 1024)
@@ -289,45 +339,49 @@ module Kernel
     # struct pollfd is { int fd; short events; short revents; }.
     POLLFD_SIZE = 8
 
-    # A polled serial port has nothing to sleep on, so waiting means asking
-    # again until the answer changes or the time runs out. timeout is in
-    # milliseconds; negative means wait indefinitely.
+    # Readiness is decided in Kernel::Poll, for every kind of descriptor at
+    # once. These four only differ in how the request arrives and how the answer
+    # is reported.
     def self.sys_poll(fds, nfds, timeout_ms)
-      deadline = timeout_ms < 0 ? nil : clock_millis + timeout_ms
-
-      loop do
-        ready = 0
-        i = 0
-        while i < nfds
-          entry = fds + i * POLLFD_SIZE
-          fd = peek32(entry)
-          revents = 0
-          if fd == FD::CONSOLE_IN && serial_ready?
-            revents = POLLIN
-          elsif fd == FD::CONSOLE_OUT || fd == FD::CONSOLE_ERR
-            revents = 0   # writable, but nothing asks about that here
-          end
-          poke16(entry + 6, revents)
-          ready += 1 if revents != 0
-          i += 1
-        end
-
-        return ready if ready > 0
-        return 0 if deadline && clock_millis >= deadline
-
-        idle
-      end
+      Poll.poll(fds, nfds, timeout_ms)
     end
 
-    # ppoll's timeout is a struct timespec rather than milliseconds.
+    # ppoll's timeout is a struct timespec rather than milliseconds. The signal
+    # mask is ignored, which is truthful: nothing here delivers signals.
     def self.sys_ppoll(fds, nfds, timespec)
       if timespec == 0
-        sys_poll(fds, nfds, -1)
+        Poll.poll(fds, nfds, -1)
       else
         seconds = peek64(timespec)
         nanos = peek64(timespec + 8)
-        sys_poll(fds, nfds, seconds * 1000 + nanos / 1_000_000)
+        Poll.poll(fds, nfds, seconds * 1000 + nanos / 1_000_000)
       end
+    end
+
+    # select's timeout is a struct timeval, in microseconds. A null pointer
+    # means wait indefinitely; a zeroed one means look once and return.
+    def self.sys_select(nfds, readfds, writefds, exceptfds, timeout)
+      deadline =
+        if timeout == 0
+          nil
+        else
+          clock_millis + peek64(timeout) * 1000 + peek64(timeout + 8) / 1000
+        end
+      Poll.select(nfds, readfds, writefds, exceptfds, deadline)
+    end
+
+    # pselect6's is a struct timespec, in nanoseconds. Nothing in CRuby reaches
+    # this -- musl's select() uses the select syscall on x86_64 -- but it is
+    # four lines sharing the same implementation, and cheap insurance against
+    # that changing.
+    def self.sys_pselect6(nfds, readfds, writefds, exceptfds, timespec)
+      deadline =
+        if timespec == 0
+          nil
+        else
+          clock_millis + peek64(timespec) * 1000 + peek64(timespec + 8) / 1_000_000
+        end
+      Poll.select(nfds, readfds, writefds, exceptfds, deadline)
     end
 
     # There is one directory and everything is in it. Linux returns the length

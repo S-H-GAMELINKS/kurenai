@@ -24,6 +24,7 @@
 #include <mruby.h>
 #include <mruby/class.h>
 
+#include "lwip/altcp.h"
 #include "lwip/dhcp.h"
 #include "lwip/etharp.h"
 #include "lwip/init.h"
@@ -400,6 +401,86 @@ prim_socket_closed(mrb_state *mrb, mrb_value self)
         ? mrb_true_value() : mrb_false_value();
 }
 
+/* The two ends of a connection, as an address in host order and a port. Four
+ * primitives rather than two returning pairs, because getsockname and
+ * getpeername are asked once per request and a Fixnum costs nothing where an
+ * Array would have to be collected.
+ *
+ * altcp_get_ip's second argument selects which end: zero is the remote one. */
+static picorb_socket_t *
+socket_of(mrb_int handle)
+{
+    return (picorb_socket_t *)(uintptr_t)handle;
+}
+
+static mrb_value
+socket_endpoint_ip(mrb_state *mrb, mrb_value self, int remote)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    picorb_socket_t *sock = socket_of(handle);
+    if (!sock || !sock->pcb) return mrb_int_value(mrb, 0);
+
+    const ip_addr_t *address = altcp_get_ip(sock->pcb, remote);
+    if (!address) return mrb_int_value(mrb, 0);
+    return mrb_int_value(mrb, (mrb_int)lwip_ntohl(ip_2_ip4(address)->addr));
+}
+
+static mrb_value
+socket_endpoint_port(mrb_state *mrb, mrb_value self, int remote)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    picorb_socket_t *sock = socket_of(handle);
+    if (!sock || !sock->pcb) return mrb_int_value(mrb, 0);
+    return mrb_int_value(mrb, (mrb_int)altcp_get_port(sock->pcb, remote));
+}
+
+static mrb_value
+prim_socket_peer_ip(mrb_state *mrb, mrb_value self)
+{
+    return socket_endpoint_ip(mrb, self, 0);
+}
+
+static mrb_value
+prim_socket_peer_port(mrb_state *mrb, mrb_value self)
+{
+    return socket_endpoint_port(mrb, self, 0);
+}
+
+static mrb_value
+prim_socket_local_ip(mrb_state *mrb, mrb_value self)
+{
+    return socket_endpoint_ip(mrb, self, 1);
+}
+
+static mrb_value
+prim_socket_local_port(mrb_state *mrb, mrb_value self)
+{
+    return socket_endpoint_port(mrb, self, 1);
+}
+
+/* How much lwIP will accept for this connection right now. The write path needs
+ * it twice: to decide how much of a large response to hand over, and to answer
+ * whether a socket is writable. A poll that says yes when the send buffer is
+ * full turns CRuby's write-EAGAIN-poll-write loop into a spin. */
+static mrb_value
+prim_socket_sendable(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    picorb_socket_t *sock = socket_of(handle);
+    if (!sock || !sock->pcb || sock->state != SOCKET_STATE_CONNECTED)
+        return mrb_int_value(mrb, 0);
+    return mrb_int_value(mrb, (mrb_int)altcp_sndbuf(sock->pcb));
+}
+
 static mrb_value
 prim_socket_close(mrb_state *mrb, mrb_value self)
 {
@@ -449,4 +530,14 @@ net_init(mrb_state *mrb, struct RClass *module)
                                prim_socket_closed, MRB_ARGS_REQ(1));
     mrb_define_module_function(mrb, module, "socket_close",
                                prim_socket_close, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "socket_peer_ip",
+                               prim_socket_peer_ip, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "socket_peer_port",
+                               prim_socket_peer_port, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "socket_local_ip",
+                               prim_socket_local_ip, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "socket_local_port",
+                               prim_socket_local_port, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "socket_sendable",
+                               prim_socket_sendable, MRB_ARGS_REQ(1));
 }
