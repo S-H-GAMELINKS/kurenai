@@ -291,6 +291,29 @@ ExternalProject_Add(picoruby
   STEP_TARGETS download patch configure build install
 )
 
+# ---------------------------------------------------------------- lwIP
+#
+# Download only. lwIP has no configure and no build of its own worth using
+# here: it is a set of C files that expect to be compiled with the flags of
+# whatever is embedding them, against an lwipopts.h the embedder writes. So the
+# kernel compiles it, and this stage exists to put the source where it can.
+ExternalProject_Add(lwip
+  SOURCE_DIR ${TP}/lwip
+
+  DOWNLOAD_COMMAND ${CMAKE_COMMAND}
+      -DDIR=${TP}/lwip -DURL=${LWIP_URL} -DREF=${LWIP_REF}
+      -P ${DEPS_DIR}/fetch_sha.cmake
+
+  UPDATE_COMMAND ""
+  PATCH_COMMAND ""
+  CONFIGURE_COMMAND ""
+  BUILD_COMMAND ""
+  INSTALL_COMMAND ""
+
+  USES_TERMINAL_DOWNLOAD ON
+  STEP_TARGETS download
+)
+
 # ---------------------------------------------------------------- bundled gems
 # NOTE:
 # irb and reline ship as bundled gems rather than in the CRuby tree, so they
@@ -327,7 +350,7 @@ set(KERNEL64_ELF ${KERNEL_DIR}/kernel64.elf)
 ExternalProject_Add(kernel
   SOURCE_DIR ${CMAKE_SOURCE_DIR}/kernel
   BINARY_DIR ${KERNEL_DIR}
-  DEPENDS musl picoruby cruby_cross gems
+  DEPENDS musl picoruby cruby_cross gems lwip
 
   DOWNLOAD_COMMAND ""
   UPDATE_COMMAND   ""
@@ -351,6 +374,7 @@ ExternalProject_Add(kernel
     -DEMBED_SCRIPT=${DEPS_DIR}/embed_script.cmake
     -DEMBED_FILES=${DEPS_DIR}/embed_files.cmake
     -DCRUBY_SRC=${TP}/cruby
+    -DLWIP_SRC=${TP}/lwip
     -DGEMS_DIR=${GEMS_DIR}
     -DCMAKE_BUILD_TYPE=Release
 
@@ -492,17 +516,24 @@ if(QEMU_EXECUTABLE)
            # by the card, and parsed in Ruby. The address is QEMU's, which
            # encodes the IP into the MAC -- so it cannot have come from here.
            #
+           # The net line is lwIP, and the address is not in this image
+           # anywhere: the interface is added with no address at all and DHCP
+           # supplies one. Which means a conversation happened -- discover,
+           # offer, request, acknowledge -- with every frame in both directions
+           # carried by a driver written in Ruby and a pump called from the
+           # syscall dispatcher.
+           #
            # The socket lines say four separate things: the constant tables
            # mkconstants.rb generated survived the cross compile, uname(2)
            # answers so the server can name itself, musl resolves a numeric
            # address with no resolver behind it, and socket.rb was found in the
            # Ruby filesystem -- Addrinfo is defined there, not in the C half.
-           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|socket: TCPServer refused with Errno::ENOSYS|irb 1[.0-9]* loaded|irb\\(main\\):001"
+           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|socket: TCPServer refused with Errno::ENOSYS|irb 1[.0-9]* loaded|irb\\(main\\):001"
            # Nothing may reach rb_bug: CRuby's answer to an impossible libc
            # result is to abort, and it has no way to say so on this machine.
            # ThreadError likewise, because pthread_create refusing is a thing
            # the userland has to be arranged around rather than discover.
-           "-DEXPECT_NONE=\\[BUG\\]|rb_bug|ThreadError"
+           "-DEXPECT_NONE=\\[BUG\\]|rb_bug|ThreadError|lwip: assertion failed|frames dropped"
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial.log
            # The kernel halts instead of exiting, so QEMU always runs for the
            # full timeout. Booting takes well under a second here; the margin
@@ -518,7 +549,7 @@ if(QEMU_EXECUTABLE)
            -DQEMU=${QEMU_EXECUTABLE}
            -DKERNEL=${KERNEL_ELF}
            -DNO_NIC=ON
-           "-DEXPECT=boot ok|e1000: no card|arp: no card|cruby init ok|irb\\(main\\):001"
+           "-DEXPECT=boot ok|e1000: no card|arp: no card|net: no card|cruby init ok|irb\\(main\\):001"
            "-DEXPECT_NONE=\\[BUG\\]|rb_bug|ThreadError"
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial_no_nic.log
            -DSECONDS=5

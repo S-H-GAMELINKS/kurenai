@@ -32,3 +32,8 @@ Kernel::E1000.report
 # the only check that covers the descriptor rings on their own, and the answer
 # comes from another machine rather than from this one.
 Kernel::ARP.report
+
+# And then the stack above it. DHCP is a conversation, so this pumps until an
+# address arrives or the time runs out.
+Kernel::Net.up(3000)
+Kernel::Net.report

@@ -83,4 +83,9 @@ long kernel_syscall_c(long n, long a1, long a2, long a3, long a4, long a5, long 
 /* Sends one syscall number to Kernel::Syscall.dispatch from now on. */
 void bridge_route(long number);
 
+/* lwIP and the primitives the Ruby driver drives it through. Registered on the
+ * same module as the rest, from bridge_init. */
+struct RClass;
+void net_init(struct mrb_state *mrb, struct RClass *module);
+
 #endif /* PICORUBY_KERNEL_H */
