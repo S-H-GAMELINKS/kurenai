@@ -37,6 +37,36 @@ require "ripper"
 puts "io/console: IO#raw #{IO.method_defined?(:raw)}"
 puts "ripper: #{Ripper.lex("1 + 1").length} tokens from Ripper.lex"
 
+# ---------------------------------------------------------------- socket
+#
+# ext/socket is linked in and registered, but the kernel has no network yet.
+# What is being checked here is the extension rather than the network: that the
+# constant tables mkconstants.rb generated survived the cross compile, that
+# require "socket" found socket.rb in the Ruby filesystem and defined Addrinfo
+# on top of the C half, and that musl's getaddrinfo answers for a numeric
+# address without a resolver.
+#
+# The last check is the interesting one. TCPServer.new has to fail, and it has
+# to fail as Errno::ENOSYS -- an ordinary SystemCallError that Ruby code can
+# rescue -- rather than as a crash or a hang. Until a NIC exists that is the
+# correct behaviour, and it is worth asserting, because the alternative is a
+# socket layer that looks present and is not.
+begin
+  require "socket"
+  puts "socket: AF_INET #{Socket::AF_INET}, SOMAXCONN #{Socket::SOMAXCONN}"
+  puts "socket: hostname #{Socket.gethostname}"
+  puts "socket: Addrinfo #{Addrinfo.tcp("10.0.2.15", 80).inspect}"
+  begin
+    TCPServer.new("0.0.0.0", 8080)
+    puts "socket: TCPServer opened, which cannot be right yet"
+  rescue SystemCallError => e
+    puts "socket: TCPServer refused with #{e.class}"
+  end
+rescue Exception => e
+  puts "socket failed: #{e.class}: #{e.message}"
+  puts e.backtrace.first(8).join("\n") if e.backtrace
+end
+
 # ---------------------------------------------------------------- irb
 
 # CRuby names its encoding constants from the encoding database, which is

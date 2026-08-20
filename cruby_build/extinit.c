@@ -10,22 +10,33 @@
  * without touching a filesystem. prism_init.c in the CRuby tree is the same
  * pattern.
  *
- * All three exist for irb. Reline drives io/console for raw-mode input and
- * io/wait to poll it, and IRB::RubyLex uses Ripper::Lexer to decide whether an
- * input line is complete. */
+ * Four exist for irb. Reline drives io/console for raw-mode input and io/wait
+ * to poll it, and IRB::RubyLex uses Ripper::Lexer to decide whether an input
+ * line is complete.
+ *
+ * socket and io/nonblock exist for the HTTP server. socket is the one place
+ * where registering the feature is not the whole story: require "socket" finds
+ * socket.so already provided and goes on to load /socket.rb from the Ruby
+ * filesystem, which is where Addrinfo#listen and Socket.tcp_server_sockets
+ * live. Registering without embedding that file gives a require that succeeds
+ * and an API with holes in it. */
 
 void ruby_init_ext(const char *name, void (*init)(void));
 
 void Init_console(void);
 void Init_wait(void);
+void Init_nonblock(void);
 void Init_stringio(void);
 void Init_ripper(void);
+void Init_socket(void);
 
 void
 Init_ext(void)
 {
     ruby_init_ext("io/console.so", Init_console);
     ruby_init_ext("io/wait.so", Init_wait);
+    ruby_init_ext("io/nonblock.so", Init_nonblock);
     ruby_init_ext("stringio.so", Init_stringio);
     ruby_init_ext("ripper.so", Init_ripper);
+    ruby_init_ext("socket.so", Init_socket);
 }
