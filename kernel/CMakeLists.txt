@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 3.25)
 project(picoruby_kernel LANGUAGES C ASM)
 
 foreach(v BOOT_DIR RUBY_DIR PICORBC PICORUBY_LIB PICORUBY_INCLUDE_DIRS MUSL_INSTALL
-          CRUBY_LIB CRUBY_SRC GEMS_DIR EMBED_SCRIPT EMBED_FILES)
+          CRUBY_LIB CRUBY_SRC LWIP_SRC GEMS_DIR EMBED_SCRIPT EMBED_FILES)
   if(NOT ${v})
     message(FATAL_ERROR "kernel: -D${v}=... is required")
   endif()
@@ -55,6 +55,7 @@ set(KERNEL_RUBY
   ${RUBY_DIR}/kernel/pci.rb
   ${RUBY_DIR}/kernel/e1000.rb
   ${RUBY_DIR}/kernel/arp.rb
+  ${RUBY_DIR}/kernel/net.rb
   ${RUBY_DIR}/kernel/syscall.rb)
 
 set(SYSCALL_BYTECODE ${CMAKE_CURRENT_BINARY_DIR}/syscall_bytecode.c)
@@ -183,6 +184,27 @@ add_custom_command(
   COMMENT "Embedding ruby/userland/init.rb")
 
 # ---------------------------------------------------------------- 64-bit kernel
+# lwIP, compiled here rather than by a build of its own: it is a set of C files
+# meant to be built with the embedder's flags against an lwipopts.h the embedder
+# writes, and kernel/net/lwipopts.h is that file.
+#
+# Listed rather than globbed, for the reason the CRuby source list is: lwIP
+# ships a great deal this machine has no use for, and a glob would pull in
+# whichever of it appeared. What is left out is as deliberate as what is in --
+# src/api is the socket and netconn layers, which NO_SYS has no threads for;
+# src/apps is a web server, an MQTT client and more, none of which is wanted
+# under a Ruby one; netif/ has SLIP, 6LoWPAN and a bridge; and ipv6 is off.
+set(LWIP_SOURCES
+  core/init.c core/def.c core/mem.c core/memp.c core/netif.c core/pbuf.c
+  core/ip.c core/inet_chksum.c core/timeouts.c core/sys.c core/stats.c
+  core/tcp.c core/tcp_in.c core/tcp_out.c core/udp.c core/raw.c core/dns.c
+  core/altcp.c core/altcp_alloc.c core/altcp_tcp.c
+  core/ipv4/ip4.c core/ipv4/ip4_addr.c core/ipv4/ip4_frag.c
+  core/ipv4/etharp.c core/ipv4/icmp.c core/ipv4/dhcp.c core/ipv4/acd.c
+  core/ipv4/igmp.c
+  netif/ethernet.c)
+list(TRANSFORM LWIP_SOURCES PREPEND "${LWIP_SRC}/src/")
+
 add_executable(kernel64.elf
   entry64.S
   isr.S
@@ -199,6 +221,8 @@ add_executable(kernel64.elf
   enc.c
   cruby.c
   bridge.c
+  net.c
+  ${LWIP_SOURCES}
   ${BOOT_BYTECODE}
   ${SYSCALL_BYTECODE}
   ${EMBEDDED_FILES_C}
@@ -206,6 +230,8 @@ add_executable(kernel64.elf
 
 target_include_directories(kernel64.elf PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/net      # lwipopts.h, which lwIP includes by name
+  ${LWIP_SRC}/src/include
   ${PICORUBY_INCLUDE_DIRS})
 
 # NOTE:

@@ -389,6 +389,11 @@ bridge_init(mrb_state *mrb)
                                prim_outl, MRB_ARGS_REQ(2));
     mrb_define_module_function(mrb, syscall_module, "halt",
                                prim_halt, MRB_ARGS_NONE());
+
+    /* The network's primitives live in kernel/net.c, next to the lwIP they
+     * drive, but they are registered here so that the whole surface between
+     * the kernel's Ruby and the machine is declared in one place. */
+    net_init(mrb, syscall_module);
 }
 
 static long

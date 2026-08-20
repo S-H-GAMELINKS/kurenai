@@ -15,6 +15,14 @@ set(MUSL_REF     0784374d561435f7c787a555aeab8ede699ed298)  # v1.2.5
 set(CRUBY_URL    https://github.com/ruby/ruby.git)
 set(CRUBY_REF    03b6d3f8898a28604fe6cb00eae3226b821168f4)  # v4.0.6
 
+# Set lwIP version
+# The same release PicoRuby's picoruby-socket pins, so the stack underneath the
+# socket layer is the one that gem's lwIP glue was written against. Fetched here
+# rather than by the gem's rake, which clones by tag at build time; everything
+# in this project is pinned by SHA.
+set(LWIP_URL     https://github.com/lwip-tcpip/lwip.git)
+set(LWIP_REF     009c2256469004009488b3385ba269461e8eb616)  # STABLE-2_2_1_RELEASE
+
 # Set PicoRuby version
 # There is no tag at this commit, which is why the SHA appears bare here.
 set(PICORUBY_URL https://github.com/picoruby/picoruby.git)
