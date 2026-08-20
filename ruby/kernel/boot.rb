@@ -27,3 +27,8 @@ puts "vfs: #{Kernel::VFS.paths.length} files"
 # wrong place to discover the hardware, and a failure at boot is visible.
 Kernel::E1000.probe
 Kernel::E1000.report
+
+# One frame out and one frame in, with no protocol stack in between. This is
+# the only check that covers the descriptor rings on their own, and the answer
+# comes from another machine rather than from this one.
+Kernel::ARP.report
