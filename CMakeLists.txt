@@ -258,8 +258,16 @@ ExternalProject_Add(picoruby
   # NOTE:
   # Submodule initialization is part of acquiring the source, so it goes in the
   # patch step: CMake runs patch right after download and before configure.
+  #
+  # The patch is to picoruby-socket, whose C port layer the kernel compiles
+  # directly -- see kernel/CMakeLists.txt. It is not built as an mrbgem: the
+  # rake build only compiles ports/posix and ports/common, and only for a posix
+  # target, which is why R2P2 compiles ports/rp2040 from its own CMake too.
   PATCH_COMMAND ${CMAKE_COMMAND}
       -DDIR=${TP}/picoruby -P ${DEPS_DIR}/picoruby_submodules.cmake
+      COMMAND ${CMAKE_COMMAND}
+      -DDIR=${TP}/picoruby -DPATCH=${CMAKE_SOURCE_DIR}/patches/picoruby-socket.patch
+      -P ${DEPS_DIR}/apply_patch.cmake
 
   UPDATE_COMMAND ""
 
@@ -375,6 +383,7 @@ ExternalProject_Add(kernel
     -DEMBED_FILES=${DEPS_DIR}/embed_files.cmake
     -DCRUBY_SRC=${TP}/cruby
     -DLWIP_SRC=${TP}/lwip
+    -DPICORUBY_SRC=${TP}/picoruby
     -DGEMS_DIR=${GEMS_DIR}
     -DCMAKE_BUILD_TYPE=Release
 
@@ -523,12 +532,18 @@ if(QEMU_EXECUTABLE)
            # carried by a driver written in Ruby and a pump called from the
            # syscall dispatcher.
            #
+           # The listener line is picoruby-socket's port layer, reached from
+           # Ruby: a pcb allocated, bound and put into listen, and an accept
+           # that reports nothing waiting rather than something worse. What it
+           # does not cover is a connection actually arriving, which is what
+           # CRuby's own TCPServer will be asked to do next.
+           #
            # The socket lines say four separate things: the constant tables
            # mkconstants.rb generated survived the cross compile, uname(2)
            # answers so the server can name itself, musl resolves a numeric
            # address with no resolver behind it, and socket.rb was found in the
            # Ruby filesystem -- Addrinfo is defined there, not in the C half.
-           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|socket: TCPServer refused with Errno::ENOSYS|irb 1[.0-9]* loaded|irb\\(main\\):001"
+           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|socket: TCPServer refused with Errno::ENOSYS|irb 1[.0-9]* loaded|irb\\(main\\):001"
            # Nothing may reach rb_bug: CRuby's answer to an impossible libc
            # result is to abort, and it has no way to say so on this machine.
            # ThreadError likewise, because pthread_create refusing is a thing

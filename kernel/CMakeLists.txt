@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 3.25)
 project(picoruby_kernel LANGUAGES C ASM)
 
 foreach(v BOOT_DIR RUBY_DIR PICORBC PICORUBY_LIB PICORUBY_INCLUDE_DIRS MUSL_INSTALL
-          CRUBY_LIB CRUBY_SRC LWIP_SRC GEMS_DIR EMBED_SCRIPT EMBED_FILES)
+          CRUBY_LIB CRUBY_SRC PICORUBY_SRC LWIP_SRC GEMS_DIR EMBED_SCRIPT EMBED_FILES)
   if(NOT ${v})
     message(FATAL_ERROR "kernel: -D${v}=... is required")
   endif()
@@ -205,6 +205,51 @@ set(LWIP_SOURCES
   netif/ethernet.c)
 list(TRANSFORM LWIP_SOURCES PREPEND "${LWIP_SRC}/src/")
 
+# picoruby-socket's C port layer: the TCP server and socket state machines that
+# sit on lwIP's raw API, written for PicoRuby and reused here. Its Ruby class
+# layer is not built -- CRuby's ext/socket provides that, and the gem's version
+# returns mruby Strings, where this kernel needs bytes to cross as addresses.
+#
+# Compiled here rather than as an mrbgem, which is how R2P2 does it too: the
+# rake build only picks up ports/posix and ports/common, and only for a posix
+# target, so ports/rp2040 has always been the embedder's job.
+#
+# PICORB_PLATFORM_LWIP has to be stated. The header would otherwise sniff
+# __linux__ -- which clang defines even here -- and hand back the POSIX
+# definition of picorb_socket_t while the lwIP one is what these files use.
+set(PICORUBY_SOCKET_DIR ${PICORUBY_SRC}/mrbgems/picoruby-socket)
+set(PICORUBY_SOCKET_SOURCES
+  ${PICORUBY_SOCKET_DIR}/ports/rp2040/tcp_server.c
+  ${PICORUBY_SOCKET_DIR}/ports/rp2040/tcp_socket.c
+  ${PICORUBY_SOCKET_DIR}/ports/rp2040/udp_socket.c
+  net/port.c)
+
+set_source_files_properties(${PICORUBY_SOCKET_SOURCES} PROPERTIES
+  COMPILE_DEFINITIONS "PICORB_PLATFORM_LWIP=1;PICORB_VM_MRUBY=1")
+
+# NOTE:
+# The chain of include paths is longer than it looks it should be because
+# picoruby.h -- which these files want for picorb_alloc and picorb_free, and
+# nothing else -- includes mruby-compiler2's headers, which include prism's.
+# None of it is linked: the kernel runs precompiled bytecode and has no Ruby
+# compiler in it. These are headers being read, not code being pulled in.
+set(PICORUBY_SOCKET_INCLUDES
+  ${PICORUBY_SOCKET_DIR}/include
+  ${PICORUBY_SRC}/include
+  ${PICORUBY_SRC}/mrbgems/mruby-compiler2/include
+  ${PICORUBY_SRC}/mrbgems/mruby-compiler2/lib/prism/include
+  ${PICORUBY_SRC}/mrbgems/picoruby-mruby/include
+  ${PICORUBY_INCLUDE_DIRS}
+  ${LWIP_SRC}/src/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/net)
+
+set_source_files_properties(${PICORUBY_SOCKET_SOURCES} net.c PROPERTIES
+  INCLUDE_DIRECTORIES "${PICORUBY_SOCKET_INCLUDES}")
+
+# net.c reaches the port layer's API, so it needs the same platform selection.
+set_source_files_properties(net.c PROPERTIES
+  COMPILE_DEFINITIONS "PICORB_PLATFORM_LWIP=1;PICORB_VM_MRUBY=1")
+
 add_executable(kernel64.elf
   entry64.S
   isr.S
@@ -223,6 +268,7 @@ add_executable(kernel64.elf
   bridge.c
   net.c
   ${LWIP_SOURCES}
+  ${PICORUBY_SOCKET_SOURCES}
   ${BOOT_BYTECODE}
   ${SYSCALL_BYTECODE}
   ${EMBEDDED_FILES_C}

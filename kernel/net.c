@@ -33,6 +33,21 @@
 #include "netif/ethernet.h"
 
 #include "kernel.h"
+#include "socket.h"        /* picoruby-socket's port layer */
+
+/* NOTE:
+ * picoruby-socket's socket.h defines picorb_socket_t twice -- once for a POSIX
+ * host, where it holds an int fd, and once for lwIP, where it holds a pcb
+ * pointer and a receive buffer. Which one is chosen has to be stated, because
+ * the header's fallback sniffs __linux__ and clang defines that even for this
+ * target (see patches/picoruby-socket.patch).
+ *
+ * Getting it wrong links cleanly and then reads the wrong bytes, in the way
+ * that a wrong mrb_int width would -- so it is caught the same way vm.c catches
+ * that: referring to a field only the lwIP definition has, so a mismatch is a
+ * compile error rather than a runtime mystery. */
+_Static_assert(sizeof(((picorb_socket_t *)0)->recv_len) == sizeof(size_t),
+               "PICORB_PLATFORM_LWIP must select picoruby-socket's lwIP struct");
 
 /* ---------------------------------------------------------------- diagnostics
  *
@@ -284,6 +299,118 @@ prim_net_dropped(mrb_state *mrb, mrb_value self)
     return mrb_int_value(mrb, (mrb_int)tx_dropped);
 }
 
+/* ---------------------------------------------------------------- sockets
+ *
+ * picoruby-socket's port layer, reached from Ruby. Its C API is exactly the
+ * shape this kernel wants: recv and send take an address and a length, so
+ * CRuby's own buffer is what lwIP copies into and out of, and no payload ever
+ * becomes an mruby String. The socket structures themselves are Ruby-visible
+ * only as integers -- pointers, handed back unchanged.
+ *
+ * Only the non-blocking calls are used. The gem's blocking ones wait by
+ * spinning, and waiting belongs where the pump is, which is Ruby. */
+
+static mrb_value
+prim_socket_listen(mrb_state *mrb, mrb_value self)
+{
+    mrb_int port, backlog;
+    (void)self;
+
+    mrb_get_args(mrb, "ii", &port, &backlog);
+    if (!interface_started) return mrb_nil_value();
+
+    picorb_tcp_server_t *server =
+        TCPServer_create(mrb, (int)port, (int)backlog);
+    if (!server) return mrb_nil_value();
+    return mrb_int_value(mrb, (mrb_int)(uintptr_t)server);
+}
+
+static mrb_value
+prim_socket_accept(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    picorb_socket_t *sock = TCPServer_accept_nonblock(
+        mrb, (picorb_tcp_server_t *)(uintptr_t)handle);
+    if (!sock) return mrb_nil_value();
+    return mrb_int_value(mrb, (mrb_int)(uintptr_t)sock);
+}
+
+static mrb_value
+prim_socket_close_server(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    TCPServer_close(mrb, (picorb_tcp_server_t *)(uintptr_t)handle);
+    return mrb_nil_value();
+}
+
+/* The payload goes straight from lwIP's buffer to the address the caller named,
+ * which for a read syscall is CRuby's own. Negative results are the port's:
+ * -2 means it would block, -1 an error, 0 end of file. */
+static mrb_value
+prim_socket_recv(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle, address, length;
+    (void)self;
+
+    mrb_get_args(mrb, "iii", &handle, &address, &length);
+    ssize_t n = TCPSocket_recv(mrb, (picorb_socket_t *)(uintptr_t)handle,
+                               (void *)(uintptr_t)address, (size_t)length,
+                               true);
+    return mrb_int_value(mrb, (mrb_int)n);
+}
+
+static mrb_value
+prim_socket_send(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle, address, length;
+    (void)self;
+
+    mrb_get_args(mrb, "iii", &handle, &address, &length);
+    ssize_t n = TCPSocket_send(mrb, (picorb_socket_t *)(uintptr_t)handle,
+                               (const void *)(uintptr_t)address,
+                               (size_t)length);
+    return mrb_int_value(mrb, (mrb_int)n);
+}
+
+static mrb_value
+prim_socket_readable(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    return Socket_ready(mrb, (picorb_socket_t *)(uintptr_t)handle)
+        ? mrb_true_value() : mrb_false_value();
+}
+
+static mrb_value
+prim_socket_closed(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    return TCPSocket_closed(mrb, (picorb_socket_t *)(uintptr_t)handle)
+        ? mrb_true_value() : mrb_false_value();
+}
+
+static mrb_value
+prim_socket_close(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    TCPSocket_close(mrb, (picorb_socket_t *)(uintptr_t)handle);
+    return mrb_nil_value();
+}
+
 void
 net_init(mrb_state *mrb, struct RClass *module)
 {
@@ -305,4 +432,21 @@ net_init(mrb_state *mrb, struct RClass *module)
                                prim_net_gateway, MRB_ARGS_NONE());
     mrb_define_module_function(mrb, module, "net_tx_dropped",
                                prim_net_dropped, MRB_ARGS_NONE());
+
+    mrb_define_module_function(mrb, module, "socket_listen",
+                               prim_socket_listen, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mrb, module, "socket_accept",
+                               prim_socket_accept, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "socket_close_server",
+                               prim_socket_close_server, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "socket_recv",
+                               prim_socket_recv, MRB_ARGS_REQ(3));
+    mrb_define_module_function(mrb, module, "socket_send",
+                               prim_socket_send, MRB_ARGS_REQ(3));
+    mrb_define_module_function(mrb, module, "socket_readable?",
+                               prim_socket_readable, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "socket_closed?",
+                               prim_socket_closed, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "socket_close",
+                               prim_socket_close, MRB_ARGS_REQ(1));
 }
