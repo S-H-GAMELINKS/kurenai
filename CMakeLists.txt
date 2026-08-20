@@ -406,7 +406,21 @@ set(QEMU_NIC
   -netdev user,id=net0
   -device e1000,netdev=net0,mac=52:54:00:12:34:56)
 
-# Boot it. Serial goes to stdio so the console is the terminal running this.
+# What the kernel's port 80 is reachable as from this side.
+#
+# 3000 rather than 80 because binding a port below
+# net.ipv4.ip_unprivileged_port_start -- 1024 on most machines -- needs
+# privileges QEMU is not going to have, and it fails with "Could not set up host
+# forwarding rule" rather than with anything about permissions. Anyone who has
+# lowered that sysctl, or given QEMU cap_net_bind_service, can set this to 80:
+#
+#   cmake -DHTTP_PORT=80 build/dev
+set(HTTP_PORT 3000 CACHE STRING
+    "Host port forwarded to the kernel's port 80 by the run target")
+
+# Boot it. Serial goes to stdio so the console is the terminal running this, and
+# the kernel's web server is reachable at http://127.0.0.1:${HTTP_PORT}/ --
+# without which "listening on 0.0.0.0:80" is a claim nobody can check by hand.
 if(QEMU_EXECUTABLE)
   add_custom_target(run
     COMMAND ${QEMU_EXECUTABLE}
@@ -415,10 +429,11 @@ if(QEMU_EXECUTABLE)
             -serial stdio
             -display none
             -no-reboot
-            ${QEMU_NIC}
+            -netdev user,id=net0,hostfwd=tcp:127.0.0.1:${HTTP_PORT}-:80
+            -device e1000,netdev=net0,mac=52:54:00:12:34:56
     DEPENDS kernel
     USES_TERMINAL
-    COMMENT "Booting the kernel in QEMU")
+    COMMENT "Booting the kernel in QEMU, port 80 forwarded to ${HTTP_PORT}")
 endif()
 
 # ---------------------------------------------------------------- verify for dev dependencies
