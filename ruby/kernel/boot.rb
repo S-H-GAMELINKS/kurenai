@@ -12,6 +12,11 @@ sum = 0
 puts "sum #{sum}"
 puts [1, 2, 3].map { |n| n * n }.inspect
 
+# Find out how much RAM there is and make it the arena. This has to happen
+# before CRuby starts: its first mmap is the first thing that needs a page.
+Kernel::Memory.init
+puts "memory: arena #{Kernel::Memory.free_bytes / (1024 * 1024)} MB free"
+
 # Build the filesystem table, then show what it holds. Doing this here rather
 # than on first use keeps a failure at boot, where it is visible.
 Kernel::VFS.build

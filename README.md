@@ -101,13 +101,15 @@ ioctl poll ppoll pipe pipe2 mmap munmap
 Left in C -- the machine:
 
 ```
-fresh pages from RAM, the timestamp counter, arch_prctl, signals,
-getrandom, the serial port, traps
+the timestamp counter, arch_prctl, signals, getrandom, the serial port,
+traps
 ```
 
-Memory is split the same way. C finds the RAM and hands out pages that have
-never been used; `ruby/kernel/memory.rb` takes pages back on `munmap`, keeps
-them as free extents, and serves `mmap` from those first.
+Memory is split the same way. C reports three facts it cannot avoid knowing:
+where the image ends, where the bootloader left its description of the
+machine, and how much of the address space the boot stub mapped. From those,
+`ruby/kernel/memory.rb` works out how much RAM there is, makes it the arena,
+hands out pages on `mmap` and takes them back on `munmap`.
 
 The split is a bitmap in `kernel/bridge.c`, so syscalls move across one at a
 time and a regression can be bisected by moving one back.
@@ -120,9 +122,9 @@ garbage collectors are running here and neither may see the other's objects.
 
 ```
 boot/            Multiboot stub: 32-bit, enters long mode, jumps to the kernel
-kernel/          C: traps, serial, timer, memory, the VM bridge     (~2,000 lines)
-ruby/kernel/     Ruby: the kernel proper -- VFS, descriptors, tty,  (~900 lines)
-                 reclaimed pages
+kernel/          C: traps, serial, timer, the VM bridge             (~1,800 lines)
+ruby/kernel/     Ruby: the kernel proper -- memory, VFS,            (~1,000 lines)
+                 descriptors, tty
 ruby/userland/   Ruby: what CRuby runs at boot
 ruby/files/      Files the VFS serves
 cruby_build/     CRuby as a static library for a freestanding target
@@ -148,12 +150,14 @@ history and completion, tested rather than asserted. It then allocates and
 drops 2.4GB, more than the arena holds, which finishes only because `munmap`
 gives pages back.
 
-Two build options help when something goes wrong:
+Two switches help when something goes wrong:
 
 ```sh
 cmake -DBRIDGE_TRACE=ON build/dev/kernel   # every routed syscall and its result
-cmake -DMEMORY_TRACE=ON build/dev/kernel   # every page allocation
 ```
+
+and `TRACE = true` in `ruby/kernel/memory.rb`, which prints every page
+allocation and release.
 
 A fault reports itself with the vector, the faulting address and a stack scan
 rather than resetting the machine. The page at address zero is deliberately

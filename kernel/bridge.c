@@ -257,30 +257,21 @@ prim_write_bytes(mrb_state *mrb, mrb_value self)
     return mrb_int_value(mrb, len);
 }
 
-/* Pages for an anonymous mapping. The arena is identity mapped already, so
- * this only has to choose an address. */
+/* The three facts about memory the Ruby side cannot find out itself: where
+ * the image ends, where the bootloader's information is, and how much of the
+ * address space the boot stub mapped. Each entry is [image_end, boot_info,
+ * mapped_limit]; ruby/kernel/memory.rb reads the bootloader's structure from
+ * there with peek32. */
 static mrb_value
-prim_alloc_pages(mrb_state *mrb, mrb_value self)
-{
-    mrb_int length;
-    (void)self;
-
-    mrb_get_args(mrb, "i", &length);
-    void *p = memory_alloc_pages((size_t)length);
-    return mrb_int_value(mrb, (mrb_int)(uintptr_t)p);
-}
-
-/* Where the arena starts and how far it has been handed out. Asked on every
- * munmap, because the second number moves with every fresh allocation. */
-static mrb_value
-prim_arena_range(mrb_state *mrb, mrb_value self)
+prim_memory_layout(mrb_state *mrb, mrb_value self)
 {
     (void)self;
 
-    mrb_value range = mrb_ary_new_capa(mrb, 2);
-    mrb_ary_push(mrb, range, mrb_int_value(mrb, (mrb_int)memory_arena_start()));
-    mrb_ary_push(mrb, range, mrb_int_value(mrb, (mrb_int)memory_arena_next()));
-    return range;
+    mrb_value layout = mrb_ary_new_capa(mrb, 3);
+    mrb_ary_push(mrb, layout, mrb_int_value(mrb, (mrb_int)memory_image_end()));
+    mrb_ary_push(mrb, layout, mrb_int_value(mrb, (mrb_int)memory_boot_info()));
+    mrb_ary_push(mrb, layout, mrb_int_value(mrb, (mrb_int)memory_mapped_limit()));
+    return layout;
 }
 
 static mrb_value
@@ -339,10 +330,8 @@ bridge_init(mrb_state *mrb)
                                prim_cstring, MRB_ARGS_REQ(1));
     mrb_define_module_function(mrb, syscall_module, "embedded_files",
                                prim_embedded_files, MRB_ARGS_NONE());
-    mrb_define_module_function(mrb, syscall_module, "alloc_pages",
-                               prim_alloc_pages, MRB_ARGS_REQ(1));
-    mrb_define_module_function(mrb, syscall_module, "arena_range",
-                               prim_arena_range, MRB_ARGS_NONE());
+    mrb_define_module_function(mrb, syscall_module, "memory_layout",
+                               prim_memory_layout, MRB_ARGS_NONE());
     mrb_define_module_function(mrb, syscall_module, "peek32",
                                prim_peek32, MRB_ARGS_REQ(1));
     mrb_define_module_function(mrb, syscall_module, "poke16",

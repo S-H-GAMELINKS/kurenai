@@ -179,13 +179,13 @@ kernel_syscall_c(long n, long a1, long a2, long a3, long a4, long a5, long a6)
         return (a2 == 3) ? 0x802 : 0;
 
     /* ---- memory ----
-     * The arena is identity mapped already, so mmap only has to pick an
-     * address. munmap keeps its pages: musl's allocator reuses inside its own
-     * groups and only unmaps large blocks, so what leaks here is bounded. */
-    case SYS_mmap: {
-        void *p = memory_alloc_pages((size_t)a2);
-        return p ? (long)(uintptr_t)p : -ENOMEM;
-    }
+     * Pages belong to ruby/kernel/memory.rb, and one allocator is the point:
+     * a second one here, handing out the same range, would be the descriptor
+     * bug again. So reaching mmap in C -- before routing is on, or from inside
+     * a dispatch -- is a mistake to name, not a request to serve. */
+    case SYS_mmap:
+        serial_puts("kernel: mmap reached C, but pages are the Ruby side's\n");
+        return -ENOMEM;
     case SYS_munmap:  return 0;
     case SYS_mremap:  return -ENOMEM;   /* musl falls back to allocate and copy */
     case SYS_madvise: return 0;

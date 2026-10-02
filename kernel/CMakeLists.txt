@@ -33,9 +33,6 @@ find_program(LLD_EXECUTABLE ld.lld REQUIRED)
 # the Ruby kernel answered.
 option(BRIDGE_TRACE "Trace syscalls routed to Ruby" OFF)
 
-# Prints the size of every page allocation. Useful when something exhausts the
-# arena, which is how CRuby's 384MB heap reservation was found.
-option(MEMORY_TRACE "Trace page allocations" OFF)
 
 # ---------------------------------------------------------------- Ruby -> C
 # picorbc emits the bytecode as a C array directly, so no separate embedding
@@ -209,9 +206,6 @@ target_include_directories(kernel64.elf PRIVATE
 # static assertion so the next mismatch is a compile error instead.
 if(BRIDGE_TRACE)
   target_compile_definitions(kernel64.elf PRIVATE BRIDGE_TRACE)
-endif()
-if(MEMORY_TRACE)
-  target_compile_definitions(kernel64.elf PRIVATE MEMORY_TRACE)
 endif()
 
 target_compile_definitions(kernel64.elf PRIVATE

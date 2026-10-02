@@ -29,14 +29,11 @@ uint64_t timer_nanos(void);
 /* Does what __libc_start_main would have: thread pointer, auxiliary vector. */
 void libc_init(void);
 
-/* Pages handed out through mmap, taken from RAM above the kernel image. */
-void   memory_init(void);
-void  *memory_alloc_pages(size_t length);
-uintptr_t memory_arena_start(void);
-uintptr_t memory_arena_next(void);
-size_t memory_used(void);
-size_t memory_available(void);
-void   serial_report_memory(void);
+/* What the machine says about memory. The pages themselves are handed out
+ * and taken back by ruby/kernel/memory.rb. */
+uintptr_t memory_image_end(void);
+uintptr_t memory_boot_info(void);
+uintptr_t memory_mapped_limit(void);
 
 /* Decimal, for the few places the kernel has to print a number. */
 void serial_put_uint(uint64_t value);

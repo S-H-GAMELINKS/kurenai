@@ -23,10 +23,8 @@ kernel_main(void)
     libc_init();
     serial_puts("libc ok\n");
 
-    memory_init();
-    serial_puts("memory ok\n");
-    serial_report_memory();
-
+    /* Memory is set up by the Ruby side as it boots: the VM runs from its own
+     * pool, and nothing asks for pages before CRuby starts. */
     vm_start();
     if (!vm_state()) {
         serial_puts("kernel: the Ruby side did not come up\n");
