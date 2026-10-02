@@ -48,9 +48,10 @@ add_custom_command(
   DEPENDS ${RUBY_DIR}/kernel/boot.rb ${PICORBC}
   COMMENT "Compiling ruby/kernel/boot.rb")
 
-# The kernel's Ruby, compiled as one unit. Order matters: vfs and fd have to be
-# defined before syscall.rb refers to them.
+# The kernel's Ruby, compiled as one unit. Order matters: memory, vfs and fd
+# have to be defined before syscall.rb refers to them.
 set(KERNEL_RUBY
+  ${RUBY_DIR}/kernel/memory.rb
   ${RUBY_DIR}/kernel/vfs.rb
   ${RUBY_DIR}/kernel/fd.rb
   ${RUBY_DIR}/kernel/tty.rb

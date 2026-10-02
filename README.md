@@ -101,9 +101,13 @@ ioctl poll ppoll pipe pipe2 mmap munmap
 Left in C -- the machine:
 
 ```
-memory allocation, the timestamp counter, arch_prctl, signals,
+fresh pages from RAM, the timestamp counter, arch_prctl, signals,
 getrandom, the serial port, traps
 ```
+
+Memory is split the same way. C finds the RAM and hands out pages that have
+never been used; `ruby/kernel/memory.rb` takes pages back on `munmap`, keeps
+them as free extents, and serves `mmap` from those first.
 
 The split is a bitmap in `kernel/bridge.c`, so syscalls move across one at a
 time and a regression can be bisected by moving one back.
@@ -117,7 +121,8 @@ garbage collectors are running here and neither may see the other's objects.
 ```
 boot/            Multiboot stub: 32-bit, enters long mode, jumps to the kernel
 kernel/          C: traps, serial, timer, memory, the VM bridge     (~2,000 lines)
-ruby/kernel/     Ruby: the kernel proper -- VFS, descriptors, tty     (~800 lines)
+ruby/kernel/     Ruby: the kernel proper -- VFS, descriptors, tty,  (~900 lines)
+                 reclaimed pages
 ruby/userland/   Ruby: what CRuby runs at boot
 ruby/files/      Files the VFS serves
 cruby_build/     CRuby as a static library for a freestanding target
@@ -139,7 +144,9 @@ cursor is and waits for the answer, which a pipe cannot give, so
 `test/terminal_driver.rb` answers -- it is not an emulator, it tracks no screen
 and interprets nothing else. The session types `1 + 9`, backspaces over the 9,
 recalls the line with the up arrow, and completes `[1,2].ma` with Tab. Editing,
-history and completion, tested rather than asserted.
+history and completion, tested rather than asserted. It then allocates and
+drops 2.4GB, more than the arena holds, which finishes only because `munmap`
+gives pages back.
 
 Two build options help when something goes wrong:
 

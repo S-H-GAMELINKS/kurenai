@@ -82,7 +82,7 @@ module Kernel
       when NR_LSEEK  then sys_lseek(a1, a2, a3)
       when NR_PIPE, NR_PIPE2 then sys_pipe(a1)
       when NR_MMAP   then sys_mmap(a2, a5, a6)
-      when NR_MUNMAP then 0
+      when NR_MUNMAP then sys_munmap(a1, a2)
       else ENOSYS
       end
     end
@@ -376,6 +376,7 @@ module Kernel
     # ---------------------------------------------------------------- memory
 
     ENOMEM = -12
+    EINVAL = -22
 
     # Anonymous mappings get fresh pages. File mappings are answered with the
     # address the file already occupies: the filesystem lives in the image, in
@@ -388,8 +389,8 @@ module Kernel
     # every required file look empty while still appearing to load.
     def self.sys_mmap(length, fd, offset)
       if fd < 0
-        page = alloc_pages(length)
-        return page == 0 ? ENOMEM : page
+        page = Memory.allocate(length)
+        return page.nil? ? ENOMEM : page
       end
 
       file = FD.entry(fd)
@@ -397,6 +398,15 @@ module Kernel
       return ENOMEM if offset + length > file[:size] + 4096
 
       file[:address] + offset
+    end
+
+    # Gives pages back. What counts as the kernel's to take back is decided in
+    # Memory.release; here only the arguments Linux itself would refuse.
+    def self.sys_munmap(address, length)
+      return EINVAL if length <= 0 || address % Memory::PAGE != 0
+
+      Memory.release(address, length)
+      0
     end
 
     # ---------------------------------------------------------------- support
@@ -413,6 +423,7 @@ module Kernel
     def self.report
       puts "ruby serviced #{@calls || 0} writes, #{@bytes || 0} bytes, " \
            "#{@opens || 0} opens"
+      Memory.report
     end
 
     def self.count_open

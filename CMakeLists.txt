@@ -464,6 +464,8 @@ if(QEMU_EXECUTABLE)
   # separate this from the dumb terminal irb started out on. The session types
   # "1 + 9", backspaces over the 9 and types 3; recalls that line with the up
   # arrow; and completes "[1,2].ma" with Tab. Editing, history, completion.
+  # It then allocates and drops 20MB 120 times, 2.4GB against an arena of
+  # about 2GB, which only finishes if munmap gives the pages back.
   add_test(NAME verify_irb COMMAND ${CMAKE_COMMAND}
            -DRUBY=${RUBY_EXECUTABLE}
            -DDRIVER=${CMAKE_SOURCE_DIR}/test/terminal_driver.rb
@@ -477,7 +479,7 @@ if(QEMU_EXECUTABLE)
            -DUNTIL=irb.finished
                       # Character classes rather than backslash escapes: CMake's regular
            # expressions are not the ones the shell or Ruby would give you.
-           "-DEXPECT=irb 1[.0-9]* loaded|irb[(]main[)]:001> 1 [+] 3|=> 4|irb[(]main[)]:002> 1 [+] 3|irb[(]main[)]:003> [[]1,2[]].map!|irb finished"
+           "-DEXPECT=irb 1[.0-9]* loaded|irb[(]main[)]:001> 1 [+] 3|=> 4|irb[(]main[)]:002> 1 [+] 3|irb[(]main[)]:003> [[]1,2[]].map!|=> :reclaimed|irb finished"
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/irb_session.cmake)
 endif()
 

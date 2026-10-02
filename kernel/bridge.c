@@ -270,6 +270,19 @@ prim_alloc_pages(mrb_state *mrb, mrb_value self)
     return mrb_int_value(mrb, (mrb_int)(uintptr_t)p);
 }
 
+/* Where the arena starts and how far it has been handed out. Asked on every
+ * munmap, because the second number moves with every fresh allocation. */
+static mrb_value
+prim_arena_range(mrb_state *mrb, mrb_value self)
+{
+    (void)self;
+
+    mrb_value range = mrb_ary_new_capa(mrb, 2);
+    mrb_ary_push(mrb, range, mrb_int_value(mrb, (mrb_int)memory_arena_start()));
+    mrb_ary_push(mrb, range, mrb_int_value(mrb, (mrb_int)memory_arena_next()));
+    return range;
+}
+
 static mrb_value
 prim_clock_millis(mrb_state *mrb, mrb_value self)
 {
@@ -328,6 +341,8 @@ bridge_init(mrb_state *mrb)
                                prim_embedded_files, MRB_ARGS_NONE());
     mrb_define_module_function(mrb, syscall_module, "alloc_pages",
                                prim_alloc_pages, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, syscall_module, "arena_range",
+                               prim_arena_range, MRB_ARGS_NONE());
     mrb_define_module_function(mrb, syscall_module, "peek32",
                                prim_peek32, MRB_ARGS_REQ(1));
     mrb_define_module_function(mrb, syscall_module, "poke16",

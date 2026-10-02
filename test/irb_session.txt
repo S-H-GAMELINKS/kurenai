@@ -1,4 +1,5 @@
 1 + 93
 [A
 [1,2].ma	
+120.times { "x" * 20_000_000; GC.start }; :reclaimed
 exit

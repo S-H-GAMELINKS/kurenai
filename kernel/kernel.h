@@ -32,6 +32,8 @@ void libc_init(void);
 /* Pages handed out through mmap, taken from RAM above the kernel image. */
 void   memory_init(void);
 void  *memory_alloc_pages(size_t length);
+uintptr_t memory_arena_start(void);
+uintptr_t memory_arena_next(void);
 size_t memory_used(void);
 size_t memory_available(void);
 void   serial_report_memory(void);

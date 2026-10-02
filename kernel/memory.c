@@ -91,6 +91,21 @@ memory_alloc_pages(size_t length)
     return p;
 }
 
+/* The range handed out so far. Pages inside it may be given back through
+ * munmap; anything outside it -- the image, the files served from it, memory
+ * not yet handed out -- is not the arena's to take back. */
+uintptr_t
+memory_arena_start(void)
+{
+    return arena_start;
+}
+
+uintptr_t
+memory_arena_next(void)
+{
+    return arena_next;
+}
+
 size_t
 memory_used(void)
 {
