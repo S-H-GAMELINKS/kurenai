@@ -13,13 +13,26 @@ irb(main):002> [1, 2, 3].map { |n| n * 3 }
 That is irb with its line editor: backspace, arrow keys, history, Tab
 completion. On bare metal, with no operating system underneath.
 
+```
+irb(main):003> termfront
+```
+
+And that is [termfront][termfront], a terminal FPS written in Ruby, run as
+published: the raycaster drawn through io/console at about 55 frames a second
+over the serial console, the campaign's missions loaded from JSON, and the
+multiplayer client -- TCP, DNS and TLS with the server's certificate
+verified -- playing against a CRuby termfront on another machine.
+
+[termfront]: https://github.com/S-H-GAMELINKS/termfront
+
 ## What it actually is
 
 Two Ruby VMs share one address space in ring 0.
 
 **PicoRuby is the kernel.** Its mruby VM is linked into the image and runs
 `ruby/kernel/*.rb`, which implements the filesystem, the file descriptor table,
-the terminal and the syscall policy. Twenty-two syscalls are handled there.
+the terminal, the network's socket layer and the syscall policy. Fifty-one
+syscalls are handled there.
 
 **CRuby is the userland.** Its libc is patched so that every syscall becomes a
 call into the kernel instead of a `syscall` instruction, which has nothing to
@@ -37,14 +50,16 @@ termios state it is changing is a Ruby Hash.
   musl 1.2.5 (patched)             ┘
         │  every syscall becomes kernel_syscall()
         ▼
-  routing table ── 22 numbers ──▶  Kernel::Syscall.dispatch     ┐
+  routing table ── 51 numbers ──▶  Kernel::Syscall.dispatch     ┐
         │                          VFS, file descriptors,       │ PicoRuby
-        │                          termios, poll                │ (the kernel)
+        │                          termios, poll, sockets,      │ (the kernel)
+        │                          the e1000 driver, the clock  │
         │                                 │                     │
         │                          C primitives (peek/poke,     │
-        │                          serial, pages)               ┘
+        │                          serial, pages, lwIP)         ┘
         ▼                                 ▼
-  memory, time, CPU, traps ── C ──▶ x86_64 (QEMU, Multiboot)
+  tasks, futex, time, randomness,
+  traps ── C ──▶ x86_64 (QEMU, Multiboot)
 ```
 
 ## Try it
@@ -55,27 +70,37 @@ cmake --build --preset dev                # fetch and build everything
 cmake --build --preset dev -t run         # boot it in QEMU
 ```
 
-The first build takes about two and a half minutes and downloads about 350MB
-of sources. Afterwards the kernel is `build/dev/kernel/kernel.elf`, 6.5MB.
+The first build takes a few minutes once the sources are fetched, and `third_party/` ends up at about 580MB
+with OpenSSL's tree the largest part of it. Afterwards the kernel is
+`build/dev/kernel/kernel.elf`, 11MB.
 
-Type Ruby at the `irb(main):001>` prompt. **Ctrl-A X quits QEMU** -- Ctrl-C is
-passed through to the guest, and `exit` leaves irb but the kernel then halts
-rather than powering off.
+Type Ruby at the `irb(main):001>` prompt, or `termfront` to play. The window is
+80x24 unless told otherwise, because a serial port cannot ask; for a larger
+terminal, say so first:
+
+```ruby
+STDOUT.winsize = [40, 120]
+termfront
+```
+
+**Ctrl-A X quits QEMU** -- Ctrl-C is passed through to the guest, and `exit`
+leaves irb but the kernel then halts rather than powering off.
 
 ```sh
-ctest --preset dev                        # 16 checks, including a live irb session
+ctest --preset dev                        # 24 checks, including live irb, termfront and TLS sessions
 ```
 
 ### What you need
 
 `cmake` 3.25+, `ninja`, `clang` 18+ with `lld` and the `llvm-*` tools,
-`qemu-system-x86_64`, `ruby` 3.1+ with `gem`, and `git`, `make`, `autoconf`.
+`qemu-system-x86_64`, `ruby` 3.1+ with `gem`, and `git`, `make`, `autoconf`,
+`perl`.
 
 On Debian or Ubuntu:
 
 ```sh
 sudo apt-get install -y cmake ninja-build clang lld llvm \
-                        qemu-system-x86 ruby git make autoconf
+                        qemu-system-x86 ruby git make autoconf perl
 ```
 
 **Neither bison nor gperf is needed**, despite what building CRuby usually
@@ -88,22 +113,34 @@ QEMU needs 2GB. CRuby's garbage collector reserves its heap address space in
 one 384MB mapping, and this kernel cannot reserve address space without also
 committing the memory behind it.
 
+QEMU also needs `-cpu max`, which every launcher here passes. The kernel's only
+source of randomness is the CPU's RDSEED or RDRAND, which TLS keys are made
+from, and QEMU's default CPU model has neither; without one the boot stops and
+says so.
+
 ## What runs where
 
 Routed to Ruby -- the policy half:
 
 ```
-read write writev open openat close lseek
-stat lstat fstat newfstatat access faccessat faccessat2 getcwd
-ioctl poll ppoll pipe pipe2 mmap munmap
+read write writev pread64 pwrite64 open openat close lseek ftruncate fcntl
+stat lstat fstat newfstatat access faccessat faccessat2 getcwd getdents64
+rename renameat renameat2 mkdir mkdirat rmdir unlink unlinkat
+ioctl poll ppoll select pselect6 pipe pipe2 mmap munmap
+socket bind listen accept4 connect getsockname getpeername
+setsockopt getsockopt shutdown sendto recvfrom sendmsg recvmsg
 ```
 
 Left in C -- the machine:
 
 ```
-the timestamp counter, arch_prctl, signals, getrandom, the serial port,
-traps
+threads as tasks, futex, the timer interrupt and preemption, the timestamp
+counter, arch_prctl, getrandom (RDSEED), the serial port, lwIP, traps
 ```
+
+The date is read from the CMOS clock by `ruby/kernel/clock.rb`, and the network
+card is driven by `ruby/kernel/e1000.rb`; C keeps only what has to be fast or
+cannot be interrupted by a garbage collector.
 
 Memory is split the same way. C reports three facts it cannot avoid knowing:
 where the image ends, where the bootloader left its description of the
@@ -122,20 +159,22 @@ garbage collectors are running here and neither may see the other's objects.
 
 ```
 boot/            Multiboot stub: 32-bit, enters long mode, jumps to the kernel
-kernel/          C: traps, serial, timer, the VM bridge             (~1,800 lines)
-ruby/kernel/     Ruby: the kernel proper -- memory, VFS,            (~1,000 lines)
-                 descriptors, tty
+kernel/          C: traps, serial, timer, tasks, lwIP glue,         (~4,000 lines)
+                 the VM bridge
+ruby/kernel/     Ruby: the kernel proper -- memory, VFS,            (~3,500 lines)
+                 descriptors, tty, clock, PCI, e1000, sockets
 ruby/userland/   Ruby: what CRuby runs at boot
 ruby/files/      Files the VFS serves
 cruby_build/     CRuby as a static library for a freestanding target
 picoruby_build/  PicoRuby's mruby VM, same
 cmake/           Toolchain, dependency fetching, verification
-test/            A stand-in terminal, and the irb session it drives
+test/            A stand-in terminal, the sessions it drives, and the
+                 servers on the host side they connect to
 ```
 
 ## How it is checked
 
-Every stage verifies that it works, not that it built. `ctest` runs 16 checks:
+Every stage verifies that it works, not that it built. `ctest` runs 24 checks:
 that musl's syscall instructions became calls, that `libmruby.a` leaves exactly
 the symbols the kernel implements, that `picorbc` compiles Ruby to bytecode,
 that `miniruby` runs, that the linked kernel contains **no `syscall`
@@ -149,6 +188,11 @@ recalls the line with the up arrow, and completes `[1,2].ma` with Tab. Editing,
 history and completion, tested rather than asserted. It then allocates and
 drops 2.4GB, more than the arena holds, which finishes only because `munmap`
 gives pages back.
+
+The same driver starts termfront from irb and quits it, connects out to an
+echo server on the host, and makes a TLS connection to a server whose
+certificate comes from a CA made a moment earlier -- verifying the chain and
+the address in it.
 
 Two switches help when something goes wrong:
 
@@ -175,18 +219,30 @@ a SHA cannot.
 | PicoRuby | `906e37f` |
 | musl | v1.2.5, patched |
 | irb / reline | 1.16.0 / 0.6.3, at the versions CRuby bundles |
+| lwIP | 2.2.1, the release picoruby-socket pins |
+| OpenSSL | 3.5.9 |
+| CA certificates | Mozilla's, as curl extracted them on 2026-09-25 |
+| termfront | v0.1.9 |
 
 ## What it does not do
 
-* No writable filesystem. The 215 files it serves are compiled into the image,
-  and irb's history is not saved.
-* The window size is 80x24. A serial port has no way to ask the other end how
-  large it is.
+* Nothing persists. The filesystem can be written, but it lives in memory and
+  is gone at the next boot, so irb's history is not saved.
+* The window size is 80x24 until `STDOUT.winsize=` says otherwise. A serial
+  port has no way to ask the other end how large it is.
+* No sound. termfront plays nothing: there is no sound card, and no player to
+  hand its files to.
+* No IPv6. Asking for an IPv6 socket is refused with the errno that makes
+  ext/socket and musl's resolver fall back to IPv4.
 * `\e[6n` is answered by whatever terminal is at the far end, so piping input
   in stalls at the first prompt -- as it would for any program expecting a
   terminal.
 * Serial console only. No framebuffer, no UEFI, no keyboard.
-* One thread. `pthread_create` refuses rather than pretending.
+* One CPU. Threads are real -- `pthread_create` makes a kernel task, and a
+  thread that never makes a syscall is preempted after 10ms -- but only one
+  runs at a time.
+* No signal handlers ever run. `tkill` ends whatever the target thread is
+  waiting for with `EINTR`, which is all CRuby's timer thread wants from it.
 
 ## Prior work
 

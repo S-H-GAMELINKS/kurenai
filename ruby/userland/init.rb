@@ -160,11 +160,12 @@ begin
   #
   # It runs for a couple of seconds and then gives way to irb, because a kernel
   # that stops at a blocking accept is a kernel that only boots when somebody
-  # connects. WEBrick will take this over and keep it.
+  # connects. verify_http knocks inside that window.
   #
   # IO.select is here rather than a bare accept on purpose. It lowers to
-  # select(2) where accept lowers to poll, and WEBrick's own accept loop uses
-  # select -- so the thing that has to work later is the thing being used here.
+  # select(2) where accept lowers to poll, and select is how a Ruby server
+  # watches several connections at once -- termfront-server's match loop among
+  # them.
   server = TCPServer.new("0.0.0.0", 80)
   puts "http: listening on #{server.local_address.ip_address}:" \
        "#{server.local_address.ip_port}"

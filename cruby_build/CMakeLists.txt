@@ -103,8 +103,8 @@ set(SOCKET_SOURCES
   ${CRUBY_SRC}/ext/socket/raddrinfo.c
   ${CRUBY_SRC}/ext/socket/ifaddr.c)
 
-# io/nonblock is three methods over fcntl(F_GETFL/F_SETFL). WEBrick's
-# Utils.set_non_blocking is what needs it.
+# io/nonblock is three methods over fcntl(F_GETFL/F_SETFL). openssl/ssl.rb
+# requires it at the top.
 list(APPEND EXT_SOURCES
   ${SOCKET_SOURCES}
   ${CRUBY_SRC}/ext/io/nonblock/nonblock.c)
