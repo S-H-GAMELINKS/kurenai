@@ -109,6 +109,25 @@ list(APPEND EXT_SOURCES
   ${SOCKET_SOURCES}
   ${CRUBY_SRC}/ext/io/nonblock/nonblock.c)
 
+# What WEBrick requires beyond the socket layer. date_core is there because
+# webrick/cookie.rb requires "time" and lib/time.rb requires "date"; digest,
+# md5 and sha1 because webrick/httpauth/digestauth.rb is loaded by
+# require "webrick" whether or not anything authenticates; etc because
+# webrick/utils.rb requires it at the top. The digest objects match $objs in
+# each extconf.rb with no CommonCrypto, which is the bundled implementation.
+set(WEBRICK_EXT_SOURCES
+  ${CRUBY_SRC}/ext/date/date_core.c
+  ${CRUBY_SRC}/ext/date/date_parse.c
+  ${CRUBY_SRC}/ext/date/date_strftime.c
+  ${CRUBY_SRC}/ext/date/date_strptime.c
+  ${CRUBY_SRC}/ext/digest/digest.c
+  ${CRUBY_SRC}/ext/digest/md5/md5.c
+  ${CRUBY_SRC}/ext/digest/md5/md5init.c
+  ${CRUBY_SRC}/ext/digest/sha1/sha1.c
+  ${CRUBY_SRC}/ext/digest/sha1/sha1init.c
+  ${CRUBY_SRC}/ext/etc/etc.c)
+list(APPEND EXT_SOURCES ${WEBRICK_EXT_SOURCES})
+
 add_library(ruby-static STATIC
   ${RUBY_SOURCES}
   ${PRISM_SOURCES}
@@ -135,6 +154,30 @@ set_source_files_properties(${CRUBY_SRC}/ext/stringio/stringio.c PROPERTIES
   COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/stringio_extconf.h")
 set_source_files_properties(${CRUBY_SRC}/ext/io/nonblock/nonblock.c PROPERTIES
   COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/io_nonblock_extconf.h")
+set_source_files_properties(${CRUBY_SRC}/ext/etc/etc.c PROPERTIES
+  COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/etc_extconf.h"
+  INCLUDE_DIRECTORIES "${CRUBY_SRC}/ext/etc")
+
+# A static build is what EXTSTATIC means upstream, and digest.h asks. Without it
+# md5init.c and sha1init.c look up rb_digest_wrap_metadata in digest.so through
+# rb_ext_resolve_symbol, which is dlsym, which dmydln.c answers by raising
+# LoadError -- digest.so is linked into the same image and can be called.
+set_source_files_properties(
+  ${CRUBY_SRC}/ext/digest/digest.c
+  ${CRUBY_SRC}/ext/digest/md5/md5init.c
+  ${CRUBY_SRC}/ext/digest/sha1/sha1init.c
+  PROPERTIES
+  COMPILE_DEFINITIONS "EXTSTATIC=1")
+
+# date_core.c, like rubysocket.h, opens with #include RUBY_EXTCONF_H.
+set_source_files_properties(
+  ${CRUBY_SRC}/ext/date/date_core.c
+  ${CRUBY_SRC}/ext/date/date_parse.c
+  ${CRUBY_SRC}/ext/date/date_strftime.c
+  ${CRUBY_SRC}/ext/date/date_strptime.c
+  PROPERTIES
+  COMPILE_DEFINITIONS "RUBY_EXTCONF_H=\"date_extconf.h\""
+  INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR};${CRUBY_SRC}/ext/date")
 
 # NOTE:
 # ext/socket cannot be given its extconf.h with -include, the way the three

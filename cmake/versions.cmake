@@ -23,6 +23,13 @@ set(CRUBY_REF    03b6d3f8898a28604fe6cb00eae3226b821168f4)  # v4.0.6
 set(LWIP_URL     https://github.com/lwip-tcpip/lwip.git)
 set(LWIP_REF     009c2256469004009488b3385ba269461e8eb616)  # STABLE-2_2_1_RELEASE
 
+# Set WEBrick version
+# Not a bundled gem since Ruby 3.0, so gems/bundled_gems has no line for it and
+# it is fetched like any other repository. 1.9.2 is the tag; its SHA is the
+# commit the annotated tag points at, not the tag object.
+set(WEBRICK_URL  https://github.com/ruby/webrick.git)
+set(WEBRICK_REF  b1684cecf9eb87cb2ae20fd52fbb80cf3e859c8a)  # v1.9.2
+
 # Set PicoRuby version
 # There is no tag at this commit, which is why the SHA appears bare here.
 set(PICORUBY_URL https://github.com/picoruby/picoruby.git)

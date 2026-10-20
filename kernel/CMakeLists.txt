@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 3.25)
 project(picoruby_kernel LANGUAGES C ASM)
 
 foreach(v BOOT_DIR RUBY_DIR PICORBC PICORUBY_LIB PICORUBY_INCLUDE_DIRS MUSL_INSTALL
-          CRUBY_LIB CRUBY_SRC PICORUBY_SRC LWIP_SRC GEMS_DIR EMBED_SCRIPT EMBED_FILES)
+          CRUBY_LIB CRUBY_SRC PICORUBY_SRC LWIP_SRC GEMS_DIR WEBRICK_SRC EMBED_SCRIPT EMBED_FILES)
   if(NOT ${v})
     message(FATAL_ERROR "kernel: -D${v}=... is required")
   endif()
@@ -125,7 +125,8 @@ endfunction()
 # The standard library is filtered rather than embedded entire. Most of what
 # CRuby ships exists to talk to a network, a package index or a filesystem this
 # machine does not have, and it is a third of the image. What is left is what
-# irb and reline actually require.
+# irb, reline and WEBrick actually require -- the last being why uri, erb and
+# cgi/escape are in.
 function(embed_ruby_under root)
   cmake_parse_arguments(A "" "" "EXCLUDE" ${ARGN})
   file(GLOB_RECURSE found RELATIVE ${root} ${root}/*.rb)
@@ -140,18 +141,25 @@ endfunction()
 
 embed_ruby_under(${GEMS_DIR}/irb/lib)
 embed_ruby_under(${GEMS_DIR}/reline/lib)
+
+# WEBrick whole, and the Ruby halves of the extensions linked in for it. As with
+# socket.rb, the C half being registered is not enough: require "digest" finds
+# digest.so and then loads /digest.rb, which is where Digest() is defined, and
+# require "date" is /date.rb requiring date_core.so rather than the other way
+# round.
+embed_all_ruby_under(${WEBRICK_SRC}/lib)
+embed_all_ruby_under(${CRUBY_SRC}/ext/date/lib)
+embed_all_ruby_under(${CRUBY_SRC}/ext/digest/lib)
+
 embed_ruby_under(${CRUBY_SRC}/lib EXCLUDE
   "^bundler"      # a package manager, with no packages and no network
   "^rubygems"     # likewise
-  "^net/"         # no network stack
-  "^uri/"
+  "^net/"         # clients; there is no connect(2) here
   "^resolv"
   "^open-uri"
   "^yaml"         # psych is a C extension that is not linked
   "^mkmf"         # builds extensions; there is no compiler here
   "^un\\.rb"
-  "^cgi"
-  "^erb"
   "^ipaddr"
   "^find\\.rb"
   "^open3")
