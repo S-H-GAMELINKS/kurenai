@@ -540,7 +540,6 @@ add_test(NAME verify_cruby_cross COMMAND ${CMAKE_COMMAND}
 # machinery with no output at all.
 set(IMAGE_RUBY
   ${CMAKE_SOURCE_DIR}/ruby/userland/init.rb
-  ${CMAKE_SOURCE_DIR}/ruby/files/webrick_kernel.rb
   ${CMAKE_SOURCE_DIR}/ruby/kernel/vfs.rb
   ${CMAKE_SOURCE_DIR}/ruby/kernel/fd.rb
   ${CMAKE_SOURCE_DIR}/ruby/kernel/tty.rb
@@ -635,10 +634,6 @@ if(QEMU_EXECUTABLE)
            # server, and irb is behind a keystroke. Which is what verify_irb
            # sends.
            #
-           # ThreadError below matters more now: WEBrick would start a thread
-           # per connection, and ruby/files/webrick_kernel.rb is what says it
-           # does not.
-           #
            # The socket lines say three separate things: the constant tables
            # mkconstants.rb generated survived the cross compile, uname(2)
            # answers so the server can name itself, musl resolves a numeric
@@ -703,6 +698,11 @@ if(QEMU_EXECUTABLE)
            --ready "http: serving"
            --expect "hello from a Ruby kernel"
            --server "WEBrick/1.9.2"
+           # Two connections that never send anything, open before the first
+           # request. With one thread serving, the first of them would hold
+           # the server for WEBrick's thirty-second request timeout and both
+           # requests would time out behind it.
+           --idle 2
            --seconds 45)
 
   # Drives irb through a stand-in terminal, exercising the three things that

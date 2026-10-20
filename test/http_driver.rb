@@ -7,10 +7,12 @@
 #
 #   ruby http_driver.rb --qemu QEMU --kernel ELF --log FILE --port N
 #                       [--ready PATTERN] [--requests N] [--expect TEXT]
-#                       [--server TEXT] [--seconds N] [--until PATTERN]
+#                       [--server TEXT] [--idle N] [--seconds N]
+#                       [--until PATTERN]
 
 require "optparse"
 require "net/http"
+require "socket"
 
 options = { seconds: 60, requests: 2, port: 18080, expect: nil,
             ready: "http: serving" }
@@ -24,6 +26,11 @@ OptionParser.new do |o|
   # Who answered. The body says the request reached the kernel; the Server
   # header says which program inside it wrote the reply.
   o.on("--server TEXT")   { |v| options[:server] = v }
+  # Connections opened before the first request and never written to, the way
+  # a browser opens spares. Each holds whatever serves it until the server
+  # gives up on it -- thirty seconds, for WEBrick -- so the requests are only
+  # answered in time if something else is free to answer them.
+  o.on("--idle N")        { |v| options[:idle] = v.to_i }
   # What the kernel prints when it is ready to be asked. An option rather than
   # a constant because it is a promise between two files, and the last time it
   # was written into this one, changing the wording in the other made the test
@@ -64,6 +71,8 @@ def request(port, path)
   end
 end
 
+idle = []
+
 IO.popen(qemu_command, "r+") do |qemu|
   listening = false
   asked = 0
@@ -83,6 +92,11 @@ IO.popen(qemu_command, "r+") do |qemu|
       # refused, because slirp only forwards to a guest that is listening.
       listening ||= transcript.include?(options[:ready])
 
+      if listening && idle.empty? && options[:idle].to_i > 0
+        options[:idle].times { idle << TCPSocket.new("127.0.0.1", options[:port]) }
+        sleep 0.2   # let the server accept them before anything else arrives
+      end
+
       if listening && asked < options[:requests]
         asked += 1
         begin
@@ -98,6 +112,7 @@ IO.popen(qemu_command, "r+") do |qemu|
       break if options[:until] && transcript.match?(Regexp.new(options[:until]))
     end
   ensure
+    idle.each { |s| s.close rescue nil }
     Process.kill("TERM", qemu.pid) rescue nil
   end
 end

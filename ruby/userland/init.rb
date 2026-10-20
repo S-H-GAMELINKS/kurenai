@@ -127,17 +127,18 @@ begin
   # WEBrick, on top of that. The listener is CRuby's own TCPServer --
   # WEBrick makes it through Socket.tcp_server_sockets -- and the accept loop is
   # WEBrick's: one select over the listeners and a shutdown pipe, a
-  # non-blocking accept, and a servlet per path. /webrick_kernel.rb takes away
-  # the two threads WEBrick would start and nothing else.
+  # non-blocking accept, and a thread per connection. Nothing in it is patched;
+  # the threads are kernel tasks.
   #
   # It serves until somebody types something. A time limit was tried first and
   # was wrong: it made a server that could only be reached by a program fast
   # enough to catch the window, which is to say not by hand -- and a web server
   # nobody can visit is not one. But a blocking accept with no way out would
-  # mean irb was only reachable on a machine with no network, so the console is
-  # one more descriptor in WEBrick's select, and a keystroke on it is a stop.
+  # mean irb was only reachable on a machine with no network, so a thread
+  # watches the console and a keystroke on it shuts the server down -- which is
+  # how WEBrick expects to be stopped, from another thread, through its
+  # shutdown pipe.
   require "webrick"
-  require "webrick_kernel"
 
   # There is no resolver, so a reverse lookup of every peer would only be a
   # wait for an answer that cannot come.
@@ -147,7 +148,6 @@ begin
     response.content_type = "text/plain"
     response.body = "hello from a Ruby kernel\n"
   end
-  server.stop_on_console(STDIN)
 
   # Printed from inside start rather than before it, because that is when the
   # select is about to run; the tests knock as soon as they see this line.
@@ -157,7 +157,18 @@ begin
          "press Enter for irb"
   end
 
+  console = Thread.new do
+    STDIN.wait_readable
+    # Take the keystroke, so Reline does not find it waiting for it.
+    begin
+      STDIN.read_nonblock(64)
+    rescue IO::WaitReadable, EOFError
+    end
+    server.shutdown
+  end
+
   server.start
+  console.join
   puts "http: stopped"
 rescue Exception => e
   puts "socket failed: #{e.class}: #{e.message}"

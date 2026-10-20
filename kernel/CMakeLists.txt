@@ -88,7 +88,7 @@ function(embed_under root)
   set(EMBEDDED_SOURCES "${EMBEDDED_SOURCES}" PARENT_SCOPE)
 endfunction()
 
-embed_under(${RUBY_DIR}/files hello.rb rbconfig.rb webrick_kernel.rb)
+embed_under(${RUBY_DIR}/files hello.rb rbconfig.rb)
 
 # Ripper's Ruby half. The C half is already linked in and registered as
 # ripper.so, which is what ripper/core.rb requires.
