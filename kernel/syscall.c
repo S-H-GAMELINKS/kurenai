@@ -223,8 +223,8 @@ kernel_syscall_c(long n, long a1, long a2, long a3, long a4, long a5, long a6)
         /* No filesystem, so nothing to describe. */
         return -ENOENT;
     case SYS_fcntl:
-        /* F_GETFL is the only one asked about; claim a plain read-write,
-         * non-blocking descriptor. Everything else is accepted silently. */
+        /* Only reached before routing is switched on: descriptors, and the
+         * flags on them, are ruby/kernel/fd.rb's. */
         return (a2 == 3) ? 0x802 : 0;
 
     /* ---- memory ----

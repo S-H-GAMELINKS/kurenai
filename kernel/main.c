@@ -106,6 +106,7 @@ kernel_main(void)
     bridge_route(84  /* SYS_rmdir      */);
     bridge_route(87  /* SYS_unlink     */);
     bridge_route(263 /* SYS_unlinkat   */);
+    bridge_route(72  /* SYS_fcntl      */);   /* O_NONBLOCK, per descriptor */
     serial_puts("syscall routing ok\n");
 
     /* Boot has been kernel code throughout. CRuby is not, and from here a

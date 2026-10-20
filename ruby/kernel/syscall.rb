@@ -58,6 +58,7 @@ module Kernel
     NR_RMDIR      = 84
     NR_UNLINK     = 87
     NR_UNLINKAT   = 263
+    NR_FCNTL      = 72
 
     # Not an errno: never returned to CRuby. kernel/bridge.c sees it, waits for
     # the next tick outside the VM, and makes the same call again. The value is
@@ -87,6 +88,12 @@ module Kernel
     O_TRUNC     = 0o1000
     O_APPEND    = 0o2000
     O_DIRECTORY = 0o200000
+    O_NONBLOCK  = 0o4000
+
+    F_GETFD = 1
+    F_SETFD = 2
+    F_GETFL = 3
+    F_SETFL = 4
 
     AT_REMOVEDIR = 0x200
 
@@ -156,6 +163,7 @@ module Kernel
       when NR_UNLINK       then sys_unlink(a1)
       when NR_UNLINKAT
         (a3 & AT_REMOVEDIR) != 0 ? sys_rmdir(a2) : sys_unlink(a2)
+      when NR_FCNTL        then sys_fcntl(a1, a2, a3)
       else ENOSYS
       end
     end
@@ -250,7 +258,7 @@ module Kernel
 
       # serial_read waits in C for its first byte, which would hold the VM for
       # as long as nobody types. So it is only called once a byte is there.
-      return WAIT_AGAIN unless serial_ready?
+      return nothing_to_read unless serial_ready?
 
       length = serial_read(buffer, count)
       return length if length <= 0
@@ -292,12 +300,41 @@ module Kernel
       unless serial_ready?
         held = held_deadline(deadline || -1)
         return 0 if held != -1 && clock_millis >= held
-        return WAIT_AGAIN
+        return nothing_to_read
       end
 
       length = serial_read_ready(buffer, count)
       serial_write(buffer, length) if TTY.echo? && length > 0
       length
+    end
+
+    # An empty console: wait for a byte, unless the caller set O_NONBLOCK, in
+    # which case say so. CRuby's read_nonblock reads until it is told EAGAIN,
+    # so a console that waited anyway held mui's input loop on its second
+    # read for as long as nobody typed.
+    def self.nothing_to_read
+      FD.nonblocking?(FD::CONSOLE_IN) ? EAGAIN : WAIT_AGAIN
+    end
+
+    # Descriptor flags. FD_CLOEXEC means nothing where nothing is exec'd, and
+    # is accepted and forgotten. The status flags are real: the access mode a
+    # descriptor was opened with, O_APPEND, and O_NONBLOCK, which is kept per
+    # descriptor because it changes what a read of an empty console does.
+    #
+    # This used to be C's, answering F_GETFL with O_RDWR|O_NONBLOCK for every
+    # descriptor and ignoring F_SETFL. CRuby believed it, never set O_NONBLOCK
+    # itself, and read the console expecting EAGAIN that never came.
+    def self.sys_fcntl(fd, command, argument)
+      return EBADF unless FD.console?(fd) || FD.entry(fd)
+
+      case command
+      when F_GETFD, F_SETFD then 0
+      when F_GETFL then FD.status_flags(fd)
+      when F_SETFL
+        FD.set_status_flags(fd, argument)
+        0
+      else EINVAL
+      end
     end
 
     # Two descriptors sharing a buffer, written back into the caller's array
