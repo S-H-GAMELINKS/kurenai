@@ -137,6 +137,66 @@ module Kernel
       Syscall.socket_close_server(server)
     end
 
+    # An outgoing connection, started and not waited for. nil when lwIP would
+    # not even send the SYN.
+    def self.connect(ip, port)
+      Syscall.socket_connect(ip, port)
+    end
+
+    # picoruby-socket's SOCKET_STATE_* for the connection, and the err_t lwIP
+    # gave when it failed.
+    def self.state(socket)
+      Syscall.socket_state(socket)
+    end
+
+    def self.error(socket)
+      Syscall.socket_error(socket)
+    end
+
+    # ---------------------------------------------------------------- datagrams
+    #
+    # kernel/net.c's datagram sockets, which keep each datagram whole with its
+    # sender. Handles are pointers, as above.
+
+    def self.udp_open
+      Syscall.udp_open
+    end
+
+    def self.udp_bind(socket, port)
+      Syscall.udp_bind(socket, port)
+    end
+
+    def self.udp_sendto(socket, address, length, ip, port)
+      Syscall.udp_sendto(socket, address, length, ip, port)
+    end
+
+    # The oldest datagram, straight into the caller's buffer: its length, or
+    # WOULD_BLOCK when none has arrived. udp_sender_ip and udp_sender_port then
+    # say who sent it.
+    def self.udp_recv(socket, address, length)
+      Syscall.udp_recv(socket, address, length)
+    end
+
+    def self.udp_sender_ip(socket)
+      Syscall.udp_sender_ip(socket)
+    end
+
+    def self.udp_sender_port(socket)
+      Syscall.udp_sender_port(socket)
+    end
+
+    def self.udp_readable?(socket)
+      Syscall.udp_readable?(socket)
+    end
+
+    def self.udp_local_port(socket)
+      Syscall.udp_local_port(socket)
+    end
+
+    def self.udp_close(socket)
+      Syscall.udp_close(socket)
+    end
+
     def self.dotted(address)
       "#{(address >> 24) & 0xFF}.#{(address >> 16) & 0xFF}." \
         "#{(address >> 8) & 0xFF}.#{address & 0xFF}"

@@ -709,6 +709,27 @@ if(QEMU_EXECUTABLE)
            # expressions are not the ones the shell or Ruby would give you.
            "-DEXPECT=irb 1[.0-9]* loaded|irb[(]main[)]:001> 1 [+] 3|=> 4|irb[(]main[)]:002> 1 [+] 3|irb[(]main[)]:003> [[]1,2[]].map!|=> :reclaimed|irb finished"
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/irb_session.cmake)
+
+  # A connection made from inside the kernel to a server outside it: CRuby's
+  # TCPSocket.new, through connect and the poll for its handshake, to an echo
+  # server test/echo_driver.rb runs on this side. One line goes out and comes
+  # back. A port nothing listens on is refused, with the errno saying so,
+  # because that is what SO_ERROR has to carry from lwIP to ext/socket.
+  #
+  # Name resolution is not checked here, because it needs a name server that
+  # answers, and that is the network outside this machine.
+  add_test(NAME verify_net_client COMMAND ${CMAKE_COMMAND}
+           -DRUBY=${RUBY_EXECUTABLE}
+           -DDRIVER=${CMAKE_SOURCE_DIR}/test/echo_driver.rb
+           "-DDRIVER_ARGS=--echo-port;18500"
+           -DQEMU=${QEMU_EXECUTABLE}
+           -DKERNEL=${KERNEL_ELF}
+           -DINPUT=${CMAKE_SOURCE_DIR}/test/net_client_session.txt
+           -DLOG=${CMAKE_CURRENT_BINARY_DIR}/net_client_session.log
+           -DSECONDS=60
+           -DUNTIL=irb.finished
+           "-DEXPECT==> .echo: hello[\\]n.|=> Errno::ECONNREFUSED|irb finished"
+           -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/irb_session.cmake)
 endif()
 
 add_files_exist_test(verify_clone_picoruby

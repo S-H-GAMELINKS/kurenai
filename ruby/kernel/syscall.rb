@@ -46,6 +46,11 @@ module Kernel
     NR_SETSOCKOPT = 54
     NR_GETSOCKOPT = 55
     NR_ACCEPT4    = 288
+    NR_CONNECT    = 42
+    NR_SENDTO     = 44
+    NR_RECVFROM   = 45
+    NR_SENDMSG    = 46
+    NR_RECVMSG    = 47
     NR_PREAD64    = 17
     NR_PWRITE64   = 18
     NR_FTRUNCATE  = 77
@@ -151,6 +156,11 @@ module Kernel
       when NR_SETSOCKOPT   then Sockets.sys_setsockopt(a1, a2, a3, a4, a5)
       when NR_GETSOCKOPT   then Sockets.sys_getsockopt(a1, a2, a3, a4, a5)
       when NR_SHUTDOWN     then Sockets.sys_shutdown(a1, a2)
+      when NR_CONNECT      then Sockets.sys_connect(a1, a2, a3)
+      when NR_SENDTO       then Sockets.sys_sendto(a1, a2, a3, a4, a5, a6)
+      when NR_RECVFROM     then Sockets.sys_recvfrom(a1, a2, a3, a4, a5, a6)
+      when NR_SENDMSG      then Sockets.sys_sendmsg(a1, a2, a3)
+      when NR_RECVMSG      then Sockets.sys_recvmsg(a1, a2, a3)
       when NR_PREAD64      then sys_pread(a1, a2, a3, a4)
       when NR_PWRITE64     then sys_pwrite(a1, a2, a3, a4)
       when NR_FTRUNCATE    then sys_ftruncate(a1, a2)

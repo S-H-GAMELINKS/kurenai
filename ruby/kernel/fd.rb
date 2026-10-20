@@ -86,19 +86,26 @@ module Kernel
     end
 
     # A socket, before it has anything to talk to. socket(2) creates the
-    # descriptor; bind and listen are separate calls that arrive later, and
-    # lwIP's raw API separates them the same way -- a pcb is made, then bound,
-    # then listened on. So the handle stays nil until there is one.
-    def self.open_socket
+    # descriptor; bind, listen and connect are separate calls that arrive
+    # later, and lwIP's raw API separates them the same way -- a pcb is made,
+    # then bound, then listened on or connected. So the handle stays nil until
+    # there is one.
+    #
+    # A datagram socket's handle is kernel/net.c's own datagram queue rather
+    # than picoruby-socket's, and peer is where a connected one sends.
+    def self.open_socket(datagram = false)
       number = next_number
       return nil unless number
 
       TABLE[number] = {
         socket: true,
+        datagram: datagram,
         handle: nil,      # picoruby-socket's pointer, once there is one
         listening: false,
+        connecting: false, # a handshake has been started and not yet seen to end
         ip: 0,            # what bind was told
         port: 0,
+        peer: nil,
         eof: false        # a read has already seen the connection end
       }
       number
@@ -112,8 +119,10 @@ module Kernel
 
       TABLE[number] = {
         socket: true,
+        datagram: false,
         handle: handle,
         listening: false,
+        connecting: false,
         ip: 0,
         port: 0,
         eof: false
@@ -135,8 +144,13 @@ module Kernel
       return false if entry.nil?
 
       if entry[:socket] && entry[:handle]
-        entry[:listening] ? Net.close_server(entry[:handle])
-                          : Net.close(entry[:handle])
+        if entry[:datagram]
+          Net.udp_close(entry[:handle])
+        elsif entry[:listening]
+          Net.close_server(entry[:handle])
+        else
+          Net.close(entry[:handle])
+        end
       end
       VFS.closed(entry[:node]) if entry[:node]
       !TABLE.delete(number).nil?
@@ -243,6 +257,7 @@ module Kernel
     # an error in itself. As on Linux, the reset is reported once and every
     # read after it is end of file.
     def self.read_socket(file, buffer, count)
+      return read_datagram(file, buffer, count) if file[:datagram]
       return 0 if file[:eof]
       return :empty if file[:handle].nil?
 
@@ -266,7 +281,12 @@ module Kernel
     def self.write_socket(number, buffer, count)
       file = TABLE[number]
       return nil unless file && file[:socket]
+      return write_datagram(file, buffer, count) if file[:datagram]
       return :full if file[:handle].nil?
+      # A connection that failed or was reset cannot be written, ever; EAGAIN
+      # would have the caller wait for room that is never coming. One the peer
+      # has only finished sending on is still writable, as TCP allows.
+      return :broken if Net.state(file[:handle]) == Sockets::STATE_ERROR
 
       room = Net.sendable(file[:handle])
       return :full if room == 0
@@ -283,6 +303,26 @@ module Kernel
       # need the network.
       Net.pump
       written
+    end
+
+    # read and write on a connected datagram socket: one datagram each way,
+    # to and from the peer connect named.
+    def self.read_datagram(file, buffer, count)
+      return :empty if file[:handle].nil?
+
+      Net.pump
+      length = Net.udp_recv(file[:handle], buffer, count)
+      length == Net::WOULD_BLOCK ? :empty : length
+    end
+
+    def self.write_datagram(file, buffer, count)
+      return nil unless file[:peer] && file[:handle]
+
+      sent = Net.udp_sendto(file[:handle], buffer, count, file[:peer][0], file[:peer][1])
+      return :broken if sent < 0
+
+      Net.pump
+      sent
     end
 
     def self.read_pipe(file, buffer, count)

@@ -71,9 +71,10 @@ kernel_main(void)
      * whole of the accept path. If that ever stops being true, the console
      * says "unhandled syscall 43" rather than misbehaving quietly.
      *
-     * connect, sendto and recvfrom are likewise absent. They are the client
-     * and datagram paths, and a server needs neither; reads and writes on a
-     * connection arrive as read, write and writev. */
+     * connect, sendto, recvfrom, sendmsg and recvmsg are the client and
+     * datagram paths: a program connecting out, and musl's resolver asking a
+     * name server over UDP. Reads and writes on a connection still arrive as read, write and
+     * writev. */
     bridge_route(41  /* SYS_socket      */);
     bridge_route(49  /* SYS_bind        */);
     bridge_route(50  /* SYS_listen      */);
@@ -83,6 +84,11 @@ kernel_main(void)
     bridge_route(54  /* SYS_setsockopt  */);
     bridge_route(55  /* SYS_getsockopt  */);
     bridge_route(48  /* SYS_shutdown    */);
+    bridge_route(42  /* SYS_connect     */);
+    bridge_route(44  /* SYS_sendto      */);
+    bridge_route(45  /* SYS_recvfrom    */);
+    bridge_route(46  /* SYS_sendmsg     */);
+    bridge_route(47  /* SYS_recvmsg     */);
 
     /* Waiting. poll is what CRuby retries a would-block read with; select is
      * what IO.select lowers to, which is how a server watches several

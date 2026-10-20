@@ -90,6 +90,11 @@ endfunction()
 
 embed_under(${RUBY_DIR}/files hello.rb rbconfig.rb)
 
+# Where musl's resolver sends its queries. QEMU's user-mode network has a DNS
+# forwarder at a fixed address, so this is a constant rather than something
+# DHCP has to fill in.
+embed_under(${RUBY_DIR}/files etc/resolv.conf)
+
 # Ripper's Ruby half. The C half is already linked in and registered as
 # ripper.so, which is what ripper/core.rb requires.
 embed_under(${CRUBY_SRC}/ext/ripper/lib

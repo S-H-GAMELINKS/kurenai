@@ -31,6 +31,7 @@
 #include "lwip/netif.h"
 #include "lwip/pbuf.h"
 #include "lwip/timeouts.h"
+#include "lwip/udp.h"
 #include "netif/ethernet.h"
 
 #include "kernel.h"
@@ -481,6 +482,12 @@ prim_socket_sendable(mrb_state *mrb, mrb_value self)
     return mrb_int_value(mrb, (mrb_int)altcp_sndbuf(sock->pcb));
 }
 
+/* Closes the connection and gives back the socket itself. TCPSocket_close
+ * frees the receive buffer but not the structure, which the port leaves to its
+ * owner; here every socket was allocated by this kernel -- by connect below, or
+ * by the server's accept -- and nothing refers to one once its descriptor is
+ * closed. The close clears lwIP's callbacks before anything is freed, so no
+ * callback can arrive for it afterwards. */
 static mrb_value
 prim_socket_close(mrb_state *mrb, mrb_value self)
 {
@@ -488,7 +495,269 @@ prim_socket_close(mrb_state *mrb, mrb_value self)
     (void)self;
 
     mrb_get_args(mrb, "i", &handle);
-    TCPSocket_close(mrb, (picorb_socket_t *)(uintptr_t)handle);
+    picorb_socket_t *sock = socket_of(handle);
+    if (!sock) return mrb_nil_value();
+    TCPSocket_close(mrb, sock);
+    mrb_free(mrb, sock);
+    return mrb_nil_value();
+}
+
+/* ---------------------------------------------------------------- connect
+ *
+ * An outgoing connection: the SYN is sent and this returns at once. The
+ * address arrives as an integer in host order, the way the Ruby side reads it
+ * out of a sockaddr_in. Waiting for the handshake is the caller's business,
+ * through socket_state below, because a wait here would hold the VM that
+ * pumps the network the handshake arrives on. */
+static mrb_value
+prim_socket_connect(mrb_state *mrb, mrb_value self)
+{
+    mrb_int ip, port;
+    (void)self;
+
+    mrb_get_args(mrb, "ii", &ip, &port);
+    if (!interface_started) return mrb_nil_value();
+
+    picorb_socket_t *sock = mrb_malloc_simple(mrb, sizeof(picorb_socket_t));
+    if (!sock) return mrb_nil_value();
+    __builtin_memset(sock, 0, sizeof(*sock));
+
+    ip_addr_t address;
+    IP_ADDR4(&address, (ip >> 24) & 0xFF, (ip >> 16) & 0xFF,
+             (ip >> 8) & 0xFF, ip & 0xFF);
+
+    if (!TCPSocket_connect_start(mrb, sock, &address, (int)port)) {
+        TCPSocket_close(mrb, sock);
+        mrb_free(mrb, sock);
+        return mrb_nil_value();
+    }
+    return mrb_int_value(mrb, (mrb_int)(uintptr_t)sock);
+}
+
+/* Where a connection is: the port's SOCKET_STATE_* value, so the Ruby side can
+ * tell a handshake still under way from one that finished or failed. */
+static mrb_value
+prim_socket_state(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    picorb_socket_t *sock = socket_of(handle);
+    if (!sock) return mrb_int_value(mrb, SOCKET_STATE_ERROR);
+    return mrb_int_value(mrb, (mrb_int)sock->state);
+}
+
+/* The err_t lwIP gave when the connection failed. Translating it to an errno
+ * is policy, and done on the Ruby side. */
+static mrb_value
+prim_socket_error(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    picorb_socket_t *sock = socket_of(handle);
+    return mrb_int_value(mrb, sock ? (mrb_int)sock->last_err : 0);
+}
+
+/* ---------------------------------------------------------------- datagrams
+ *
+ * UDP is written here against lwIP's raw API rather than taken from
+ * picoruby-socket's port. The port's UDP socket appends every datagram to one
+ * byte buffer and keeps only the last sender, which is a stream, not datagrams:
+ * two DNS answers arriving together would be read as one, from whoever sent
+ * the second. recvfrom has to return one datagram and its own sender, so each
+ * is kept whole in a slot of its own.
+ *
+ * What uses this is musl's resolver, which sends a query or two and waits for
+ * the answers, so a handful of slots of an Ethernet payload each is plenty.
+ * A datagram that finds every slot full is dropped, which UDP allows and the
+ * resolver retries after. */
+
+#define DGRAM_SLOTS 8
+#define DGRAM_BYTES 1500
+
+typedef struct {
+    struct udp_pcb *pcb;
+    unsigned head;               /* the next datagram to read */
+    unsigned count;
+    struct {
+        uint16_t length;
+        uint16_t port;           /* host order */
+        uint32_t ip;             /* host order */
+        uint8_t  bytes[DGRAM_BYTES];
+    } slot[DGRAM_SLOTS];
+} datagram_socket_t;
+
+/* Runs inside lwIP, so it only copies: no allocation, and nothing that could
+ * reach the VM. */
+static void
+datagram_received(void *arg, struct udp_pcb *pcb, struct pbuf *p,
+                  const ip_addr_t *address, u16_t port)
+{
+    datagram_socket_t *sock = arg;
+    (void)pcb;
+
+    if (sock->count < DGRAM_SLOTS && p->tot_len <= DGRAM_BYTES) {
+        unsigned i = (sock->head + sock->count) % DGRAM_SLOTS;
+        pbuf_copy_partial(p, sock->slot[i].bytes, p->tot_len, 0);
+        sock->slot[i].length = p->tot_len;
+        sock->slot[i].port = port;
+        sock->slot[i].ip = address ? lwip_ntohl(ip_2_ip4(address)->addr) : 0;
+        sock->count++;
+    }
+    pbuf_free(p);
+}
+
+static datagram_socket_t *
+datagram_of(mrb_int handle)
+{
+    return (datagram_socket_t *)(uintptr_t)handle;
+}
+
+static mrb_value
+prim_udp_open(mrb_state *mrb, mrb_value self)
+{
+    (void)self;
+    if (!interface_started) return mrb_nil_value();
+
+    datagram_socket_t *sock = mrb_malloc_simple(mrb, sizeof(datagram_socket_t));
+    if (!sock) return mrb_nil_value();
+    __builtin_memset(sock, 0, sizeof(*sock));
+
+    sock->pcb = udp_new();
+    if (!sock->pcb) {
+        mrb_free(mrb, sock);
+        return mrb_nil_value();
+    }
+    udp_recv(sock->pcb, datagram_received, sock);
+    return mrb_int_value(mrb, (mrb_int)(uintptr_t)sock);
+}
+
+/* Port 0 means "any", and lwIP picks one, as bind(2) does. */
+static mrb_value
+prim_udp_bind(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle, port;
+    (void)self;
+
+    mrb_get_args(mrb, "ii", &handle, &port);
+    return udp_bind(datagram_of(handle)->pcb, IP4_ADDR_ANY, (u16_t)port) == ERR_OK
+        ? mrb_true_value() : mrb_false_value();
+}
+
+/* Sends straight from the caller's buffer. Binds first if nothing has, which is
+ * what sendto on an unbound socket does on Linux, and lwIP's udp_sendto does
+ * as well; the explicit call keeps the local port knowable for getsockname. */
+static mrb_value
+prim_udp_sendto(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle, address, length, ip, port;
+    (void)self;
+
+    mrb_get_args(mrb, "iiiii", &handle, &address, &length, &ip, &port);
+    datagram_socket_t *sock = datagram_of(handle);
+    if (length < 0 || length > 0xFFFF) return mrb_int_value(mrb, -1);
+
+    if (sock->pcb->local_port == 0 &&
+        udp_bind(sock->pcb, IP4_ADDR_ANY, 0) != ERR_OK)
+        return mrb_int_value(mrb, -1);
+
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, (u16_t)length, PBUF_RAM);
+    if (!p) return mrb_int_value(mrb, -1);
+    pbuf_take(p, (const void *)(uintptr_t)address, (u16_t)length);
+
+    ip_addr_t destination;
+    IP_ADDR4(&destination, (ip >> 24) & 0xFF, (ip >> 16) & 0xFF,
+             (ip >> 8) & 0xFF, ip & 0xFF);
+    err_t err = udp_sendto(sock->pcb, p, &destination, (u16_t)port);
+    pbuf_free(p);
+    return mrb_int_value(mrb, err == ERR_OK ? length : -1);
+}
+
+/* Takes the oldest datagram into the caller's buffer, truncating it as
+ * recvfrom(2) does when the buffer is short. Returns its length, or -2 when
+ * nothing has arrived. udp_sender_ip and udp_sender_port then name who sent
+ * it, until the next one is taken. */
+static mrb_value
+prim_udp_recv(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle, address, length;
+    (void)self;
+
+    mrb_get_args(mrb, "iii", &handle, &address, &length);
+    datagram_socket_t *sock = datagram_of(handle);
+    if (sock->count == 0) return mrb_int_value(mrb, -2);
+
+    unsigned i = sock->head;
+    mrb_int n = sock->slot[i].length;
+    if (n > length) n = length;
+    __builtin_memcpy((void *)(uintptr_t)address, sock->slot[i].bytes, (size_t)n);
+
+    /* The sender stays readable in the slot just vacated: nothing is written
+     * there until the callback runs, and that only happens while the Ruby side
+     * pumps, after it has read what it wanted. */
+    sock->head = (sock->head + 1) % DGRAM_SLOTS;
+    sock->count--;
+    return mrb_int_value(mrb, n);
+}
+
+static mrb_value
+prim_udp_sender_ip(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    datagram_socket_t *sock = datagram_of(handle);
+    unsigned last = (sock->head + DGRAM_SLOTS - 1) % DGRAM_SLOTS;
+    return mrb_int_value(mrb, (mrb_int)sock->slot[last].ip);
+}
+
+static mrb_value
+prim_udp_sender_port(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    datagram_socket_t *sock = datagram_of(handle);
+    unsigned last = (sock->head + DGRAM_SLOTS - 1) % DGRAM_SLOTS;
+    return mrb_int_value(mrb, (mrb_int)sock->slot[last].port);
+}
+
+static mrb_value
+prim_udp_readable(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    return datagram_of(handle)->count > 0 ? mrb_true_value() : mrb_false_value();
+}
+
+/* The local port lwIP chose, for getsockname. */
+static mrb_value
+prim_udp_local_port(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    return mrb_int_value(mrb, (mrb_int)datagram_of(handle)->pcb->local_port);
+}
+
+static mrb_value
+prim_udp_close(mrb_state *mrb, mrb_value self)
+{
+    mrb_int handle;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &handle);
+    datagram_socket_t *sock = datagram_of(handle);
+    udp_remove(sock->pcb);
+    mrb_free(mrb, sock);
     return mrb_nil_value();
 }
 
@@ -530,6 +799,30 @@ net_init(mrb_state *mrb, struct RClass *module)
                                prim_socket_closed, MRB_ARGS_REQ(1));
     mrb_define_module_function(mrb, module, "socket_close",
                                prim_socket_close, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "socket_connect",
+                               prim_socket_connect, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mrb, module, "socket_state",
+                               prim_socket_state, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "socket_error",
+                               prim_socket_error, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "udp_open",
+                               prim_udp_open, MRB_ARGS_NONE());
+    mrb_define_module_function(mrb, module, "udp_bind",
+                               prim_udp_bind, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mrb, module, "udp_sendto",
+                               prim_udp_sendto, MRB_ARGS_REQ(5));
+    mrb_define_module_function(mrb, module, "udp_recv",
+                               prim_udp_recv, MRB_ARGS_REQ(3));
+    mrb_define_module_function(mrb, module, "udp_sender_ip",
+                               prim_udp_sender_ip, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "udp_sender_port",
+                               prim_udp_sender_port, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "udp_readable?",
+                               prim_udp_readable, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "udp_local_port",
+                               prim_udp_local_port, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, module, "udp_close",
+                               prim_udp_close, MRB_ARGS_REQ(1));
     mrb_define_module_function(mrb, module, "socket_peer_ip",
                                prim_socket_peer_ip, MRB_ARGS_REQ(1));
     mrb_define_module_function(mrb, module, "socket_peer_port",

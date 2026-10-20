@@ -75,8 +75,22 @@ module Kernel
     # never attempted and end of file never arrives.
     def self.socket_revents(entry)
       handle = entry[:handle]
+
+      # A datagram socket can always be sent on, and is readable once a
+      # datagram is waiting. Before it has a handle nothing can have arrived.
+      if entry[:datagram]
+        ready = POLLOUT
+        ready |= POLLIN if handle && Net.udp_readable?(handle)
+        return ready
+      end
+
       return POLLHUP if handle.nil? && !entry[:listening]
       return 0 if handle.nil?
+
+      if entry[:connecting]
+        ready = Sockets.connect_revents(entry)
+        return ready if ready
+      end
 
       ready = 0
       if entry[:listening]

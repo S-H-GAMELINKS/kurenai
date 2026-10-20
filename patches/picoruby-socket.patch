@@ -1,5 +1,5 @@
 diff --git a/mrbgems/picoruby-socket/include/socket.h b/mrbgems/picoruby-socket/include/socket.h
-index fc1ad11..f9b33c4 100644
+index fc1ad11..4ba5f16 100644
 --- a/mrbgems/picoruby-socket/include/socket.h
 +++ b/mrbgems/picoruby-socket/include/socket.h
 @@ -5,9 +5,19 @@
@@ -25,7 +25,19 @@ index fc1ad11..f9b33c4 100644
  #endif
  
  #define SOCKET_ERROR_MSG_LEN 128
-@@ -64,6 +74,10 @@ typedef struct {
+@@ -57,6 +67,11 @@ typedef struct {
+   char last_sender_host[256];
+   int last_sender_port;
+   char errmsg[SOCKET_ERROR_MSG_LEN]; /* Last error message from C layer */
++  /* picoruby-kernel: the err_t lwIP last reported, through the error callback
++   * or a failed connect. A socket in SOCKET_STATE_ERROR says that it failed;
++   * this says how, which is the difference between ECONNREFUSED and
++   * ETIMEDOUT to whoever asks SO_ERROR. */
++  int last_err;
+ } picorb_socket_t;
+ 
+ /* LwIP helper functions - implemented in ports/rp2040/ */
+@@ -64,6 +79,10 @@ typedef struct {
  extern void lwip_begin(void);
  extern void lwip_end(void);
  extern void Net_busy_wait_ms(int ms);
@@ -36,6 +48,18 @@ index fc1ad11..f9b33c4 100644
  /* Note: ip parameter type depends on LwIP configuration (ip_addr_t in implementation) */
  extern int Net_get_ip(const char *name, void *ip);
  #endif
+@@ -90,6 +109,11 @@ extern int Net_get_ip(const char *name, void *ip);
+ /* TCP Socket API */
+ bool TCPSocket_create(picorb_state *vm, picorb_socket_t *sock);
+ bool TCPSocket_connect(picorb_state *vm, picorb_socket_t *sock, const char *host, int port);
++#ifndef PICORB_PLATFORM_POSIX
++/* picoruby-kernel: starts a connection to an address already resolved, and
++ * returns without waiting for it. ip is an ip_addr_t. */
++bool TCPSocket_connect_start(picorb_state *vm, picorb_socket_t *sock, const void *ip, int port);
++#endif
+ ssize_t TCPSocket_send(picorb_state *vm, picorb_socket_t *sock, const void *data, size_t len);
+ ssize_t TCPSocket_recv(picorb_state *vm, picorb_socket_t *sock, void *buf, size_t len, bool nonblock);
+ bool TCPSocket_close(picorb_state *vm, picorb_socket_t *sock);
 diff --git a/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c b/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c
 index 6672002..a2a5b7c 100644
 --- a/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c
@@ -340,7 +364,7 @@ index 6672002..a2a5b7c 100644
  
    if (server->listen_pcb) {
 diff --git a/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c b/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c
-index 9844bc6..2aca584 100644
+index 9844bc6..464bc50 100644
 --- a/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c
 +++ b/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c
 @@ -14,6 +14,11 @@
@@ -355,6 +379,68 @@ index 9844bc6..2aca584 100644
  /* Pre-allocated receive buffer size for TCP. */
  #ifndef TCP_RECV_BUF_SIZE
  #define TCP_RECV_BUF_SIZE 4096
+@@ -72,6 +77,7 @@ tcp_connected_callback(void *arg, struct altcp_pcb *pcb, err_t err)
+   if (err != ERR_OK) {
+     sock->state = SOCKET_STATE_ERROR;
+     sock->connected = false;
++    sock->last_err = err;
+     return err;
+   }
+ 
+@@ -161,6 +167,7 @@ tcp_err_callback(void *arg, err_t err)
+ 
+   sock->state = SOCKET_STATE_ERROR;
+   sock->connected = false;
++  sock->last_err = err;
+   sock->pcb = NULL; /* PCB is already freed by LwIP */
+ }
+ 
+@@ -253,6 +260,45 @@ TCPSocket_connect(picorb_state *vm, picorb_socket_t *sock, const char *host, int
+   }
+ }
+ 
++/* picoruby-kernel: TCPSocket_connect with its two waits taken out.
++ *
++ * That one resolves a host name itself and then spins until the handshake
++ * finishes, which suits a microcontroller with one program on it. Here the
++ * caller is a syscall: the name was resolved by the C library before connect
++ * was ever called, and a spin inside a syscall holds the only VM while the
++ * handshake it is waiting for needs the network pumped by that same VM. So
++ * this sends the SYN and returns, leaving sock->state at CONNECTING; the
++ * connected and error callbacks move it on, and whoever asked comes back to
++ * look. */
++bool
++TCPSocket_connect_start(picorb_state *vm, picorb_socket_t *sock, const void *ip, int port)
++{
++  if (!sock || !ip || port <= 0 || port > 65535) return false;
++
++  if (!sock->pcb && !TCPSocket_create(vm, sock)) return false;
++
++  altcp_recv(sock->pcb, tcp_recv_callback);
++  altcp_sent(sock->pcb, tcp_sent_callback);
++  altcp_err(sock->pcb, tcp_err_callback);
++  altcp_poll(sock->pcb, tcp_poll_callback, 4);
++  altcp_arg(sock->pcb, sock);
++
++  sock->remote_port = port;
++  sock->state = SOCKET_STATE_CONNECTING;
++
++  lwip_begin();
++  err_t err = altcp_connect(sock->pcb, (const ip_addr_t *)ip, (u16_t)port,
++                            tcp_connected_callback);
++  lwip_end();
++
++  if (err != ERR_OK) {
++    sock->state = SOCKET_STATE_ERROR;
++    sock->last_err = err;
++    return false;
++  }
++  return true;
++}
++
+ /* Send data */
+ ssize_t
+ TCPSocket_send(picorb_state *vm, picorb_socket_t *sock, const void *data, size_t len)
 diff --git a/mrbgems/picoruby-socket/ports/rp2040/udp_socket.c b/mrbgems/picoruby-socket/ports/rp2040/udp_socket.c
 index 180352c..6723e49 100644
 --- a/mrbgems/picoruby-socket/ports/rp2040/udp_socket.c

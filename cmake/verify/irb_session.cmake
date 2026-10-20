@@ -1,5 +1,6 @@
 # cmake -DRUBY=<ruby> -DDRIVER=<terminal_driver.rb> -DQEMU=<qemu> -DKERNEL=<elf>
 #       -DINPUT=<file> -DLOG=<file> -DEXPECT=<a|b|c> [-DSECONDS=n] [-DUNTIL=re]
+#       [-DDRIVER_ARGS=<extra;arguments>]
 #       -P irb_session.cmake
 #
 # Drives irb through a stand-in terminal and checks what came back.
@@ -23,6 +24,9 @@ endif()
 set(driver_args ${DRIVER}
     --qemu ${QEMU} --kernel ${KERNEL} --log ${LOG} --input ${INPUT}
     --seconds ${SECONDS})
+if(DEFINED DRIVER_ARGS)
+  list(APPEND driver_args ${DRIVER_ARGS})
+endif()
 if(DEFINED UNTIL)
   list(APPEND driver_args --until ${UNTIL})
 endif()
