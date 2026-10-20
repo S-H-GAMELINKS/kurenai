@@ -91,6 +91,9 @@ kernel_main(void)
     bridge_route(270 /* SYS_pselect6 */);
     serial_puts("syscall routing ok\n");
 
+    /* Boot has been kernel code throughout. CRuby is not, and from here a
+     * tick may switch away from it to another thread. */
+    preempt_enable();
     cruby_start();
 
     vm_report_syscalls();

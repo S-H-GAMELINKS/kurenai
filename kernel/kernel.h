@@ -128,6 +128,11 @@ long  task_yield(void);
 long  task_tkill(int tid, int sig);
 long  task_set_tid_address(int *ctid);
 
+/* Raised for as long as the current task is in the kernel; a tick only
+ * switches tasks when it is zero. See kernel/task.c. */
+void  preempt_disable(void);
+void  preempt_enable(void);
+
 /* lwIP and the primitives the Ruby driver drives it through. Registered on the
  * same module as the rest, from bridge_init. */
 struct RClass;

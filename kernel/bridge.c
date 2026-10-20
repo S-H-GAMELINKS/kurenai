@@ -493,8 +493,22 @@ dispatch_trampoline(void *arg)
                             call->a[2], call->a[3], call->a[4], call->a[5]);
 }
 
+static long kernel_syscall_inner(long n, long a1, long a2, long a3,
+                                 long a4, long a5, long a6);
+
+/* The way into the kernel for every syscall. Nothing in here is preempted:
+ * a tick that lands while the count is raised is acted on as it drops. */
 long
 kernel_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6)
+{
+    preempt_disable();
+    long ret = kernel_syscall_inner(n, a1, a2, a3, a4, a5, a6);
+    preempt_enable();
+    return ret;
+}
+
+static long
+kernel_syscall_inner(long n, long a1, long a2, long a3, long a4, long a5, long a6)
 {
     mrb_state *mrb = vm_state();
 

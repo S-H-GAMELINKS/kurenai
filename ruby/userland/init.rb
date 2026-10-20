@@ -84,6 +84,15 @@ begin
    .each(&:join)
   puts "mutex: #{total}"
 
+  # A thread that never makes a syscall. Without preemption it would keep the
+  # CPU and the GVL for ever, and this sleep would never end: the tick has to
+  # take the CPU from it so CRuby's timer thread can ask for the GVL back.
+  spinner = Thread.new { loop {} }
+  sleep 0.05
+  spinner.kill
+  spinner.join
+  puts "preempt: a spinning thread gave way"
+
   require "timeout"
   begin
     Timeout.timeout(0.1) { sleep 1 }

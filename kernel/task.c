@@ -13,6 +13,15 @@
  * BLOCKED, and schedule() runs the next READY one, or halts until the tick if
  * there is none.
  *
+ * Switching is preemptive, but only outside the kernel. Every syscall and
+ * every entry musl makes directly raises the task's preempt_count for its
+ * duration, and a tick that lands while it is raised only notes that the
+ * slice is over; the switch happens when the count drops back to zero. So
+ * kernel code -- the scheduler, futex, the bridge, the VM it calls -- never
+ * has another task run in the middle of it, and needs no locks, because there
+ * is one CPU. A tick that lands in CRuby or musl with the count at zero can
+ * switch on the spot.
+ *
  * This is the mechanism, in C, for the same reason memory pages are found in C
  * and handed out in Ruby: a context switch is a few instructions on registers,
  * and futex is on the path of every contended lock. What a thread is allowed to
@@ -28,6 +37,11 @@
 #define IA32_FS_BASE 0xC0000100
 
 #define MAX_TASKS 64
+
+/* How long a thread may run before another ready one gets the CPU, in ticks.
+ * CRuby's own timer thread asks for the GVL to change hands every 100ms; this
+ * only has to be short enough that the timer thread gets to say so. */
+#define SLICE_TICKS 10
 
 #define CLONE_VM             0x00000100
 #define CLONE_SETTLS         0x00080000
@@ -59,11 +73,35 @@ struct task {
     long wake_result;       /* 0 woken, -ETIMEDOUT, -EINTR */
 
     struct syscall_retry retry;
+
+    int preempt_count;      /* raised while in the kernel; see above */
 };
+
+/* What irq_timer in isr.S leaves on the IST stack: x87/SSE state, the fifteen
+ * general registers in the order they were pushed, and the CPU's own frame. */
+struct irq_frame {
+    uint8_t  fx[512];
+    uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
+    uint64_t rbp, rdi, rsi, rdx, rcx, rbx, rax;
+    uint64_t rip, cs, rflags, rsp, ss;
+};
+
+_Static_assert(sizeof(struct irq_frame) == 672, "isr.S builds 672 bytes");
+_Static_assert(sizeof(struct irq_frame) % 16 == 0, "fxsave wants 16-byte alignment");
 
 static struct task tasks[MAX_TASKS];
 static struct task *current;
 static int next_tid = 2;
+
+/* Before task_init there is no current task, only the boot code, and nothing
+ * to switch to. */
+static int boot_preempt_count = 1;
+
+/* A tick arrived in the kernel after the slice was over. */
+static volatile int need_resched;
+static uint64_t slice_start;
+
+extern volatile uint64_t irq_ticks;
 
 /* A task that has just been switched away from, so the one switched to can
  * finish what it could not: free the slot of a task that exited, and give back
@@ -73,7 +111,11 @@ static uintptr_t unmap_base;
 static size_t unmap_size;
 
 void switch_to(uint64_t *save_rsp, uint64_t next_rsp);
+void switch_from_irq(uint64_t next_rsp) __attribute__((noreturn));
 void task_trampoline(void);
+void irq_resume_task(void);
+
+static void schedule(void);
 
 static uint64_t
 read_fs_base(void)
@@ -100,6 +142,30 @@ task_init(void)
     current->state = TASK_READY;
     current->tid = 1;
     current->retry.deadline = SYSCALL_NO_DEADLINE;
+    current->preempt_count = boot_preempt_count;
+}
+
+/* ---------------------------------------------------------------- preemption */
+
+void
+preempt_disable(void)
+{
+    if (current) current->preempt_count++;
+    else boot_preempt_count++;
+}
+
+/* Leaving the kernel is where a tick that arrived inside it is acted on. The
+ * count is still raised while schedule() runs, so the switch is not itself
+ * preempted, and it is per task, so it comes back as it was. */
+void
+preempt_enable(void)
+{
+    if (!current) { boot_preempt_count--; return; }
+    if (current->preempt_count == 1 && need_resched) {
+        need_resched = 0;
+        schedule();
+    }
+    current->preempt_count--;
 }
 
 int
@@ -118,7 +184,8 @@ task_retry_state(void)
 /* ---------------------------------------------------------------- switching */
 
 /* Runs on the task switched to, right after the switch -- in schedule() for a
- * task that was running before, in task_started for a new one. */
+ * task that was running before, in task_started for a new one, in
+ * task_resumed for one a tick preempted. */
 static void
 finish_switch(void)
 {
@@ -183,17 +250,89 @@ schedule(void)
     prev->fs_base = read_fs_base();
     switched_from = prev;
     current = next;
+    slice_start = irq_ticks;
     write_fs_base(next->fs_base);
     switch_to(&prev->rsp, next->rsp);
 
     finish_switch();
 }
 
-/* First C a new task runs, from task_trampoline in switch.S. */
+/* First C a new task runs, from task_trampoline in switch.S. It was created
+ * with its count raised, and leaves the kernel here for the first time. */
 void
 task_started(void)
 {
     finish_switch();
+    preempt_enable();
+}
+
+/* First C a preempted task runs when it is switched back to, from
+ * irq_resume_task in switch.S, before its registers are restored. Its count
+ * is zero -- it was preempted outside the kernel -- so it is raised around
+ * what finishing the switch may do, munmap included. */
+void
+task_resumed(void)
+{
+    preempt_disable();
+    finish_switch();
+    preempt_enable();
+}
+
+/* ---------------------------------------------------------------- the tick */
+
+/* Saves the interrupted task where irq_resume_task will find it -- on its own
+ * stack, below the 128 bytes of red zone the code it was running may have
+ * been using -- and switches to next. The frame on the IST stack is abandoned:
+ * the next tick starts that stack from the top again. */
+static void __attribute__((noreturn))
+preempt(struct irq_frame *frame, struct task *next)
+{
+    uintptr_t sp = ((uintptr_t)frame->rsp - 128 - sizeof(*frame)) & ~(uintptr_t)15;
+    __builtin_memcpy((void *)sp, frame, sizeof(*frame));
+
+    /* What switch_to would have left: six callee-saved registers, which
+     * irq_resume restores from the copy anyway, and a return address. */
+    uint64_t *switch_frame = (uint64_t *)sp - 7;
+    for (int i = 0; i < 6; i++) switch_frame[i] = 0;
+    switch_frame[6] = (uint64_t)(uintptr_t)irq_resume_task;
+
+    struct task *prev = current;
+    prev->rsp = (uint64_t)(uintptr_t)switch_frame;
+    prev->fs_base = read_fs_base();
+    switched_from = prev;
+    current = next;
+    slice_start = irq_ticks;
+    write_fs_base(next->fs_base);
+    switch_from_irq(next->rsp);
+}
+
+/* Called by irq_timer in isr.S for every tick, with interrupts off. */
+void
+irq_tick(struct irq_frame *frame)
+{
+    irq_ticks++;
+    outb(0x20, 0x20);   /* end of interrupt, to the master PIC */
+
+    if (!current) return;
+    int slice_over = irq_ticks - slice_start >= SLICE_TICKS;
+
+    /* In the kernel nothing may be switched away from; say so for when it
+     * leaves. Waking sleepers is left to schedule() too: the kernel may be in
+     * the middle of changing the very task a wake would touch. */
+    if (current->preempt_count > 0) {
+        if (slice_over) need_resched = 1;
+        return;
+    }
+
+    wake_expired(timer_nanos());
+    if (!slice_over) return;
+
+    struct task *next = pick_next();
+    if (!next || next == current) {
+        slice_start = irq_ticks;
+        return;
+    }
+    preempt(frame, next);
 }
 
 /* Blocks the current task until woken, until deadline (0 for never), or until
@@ -201,10 +340,10 @@ task_started(void)
 static long
 block(volatile uint32_t *futex, uint64_t deadline)
 {
-    current->state = TASK_BLOCKED;
     current->futex = futex;
     current->wake_at = deadline;
     current->wake_result = 0;
+    current->state = TASK_BLOCKED;
     schedule();
     return current->wake_result;
 }
@@ -218,17 +357,22 @@ task_clone(int (*func)(void *), void *stack, int flags, void *arg,
     /* Threads only. A new address space would be fork, and there is one. */
     if (!(flags & CLONE_VM)) return -ENOSYS;
 
+    /* musl calls this directly rather than through kernel_syscall, so it
+     * enters the kernel here. */
+    preempt_disable();
+
     struct task *t = NULL;
     for (int i = 0; i < MAX_TASKS; i++) {
         if (tasks[i].state == TASK_FREE) { t = &tasks[i]; break; }
     }
-    if (!t) return -EAGAIN;
+    if (!t) { preempt_enable(); return -EAGAIN; }
 
     *t = (struct task){0};
     t->tid = next_tid++;
     t->fs_base = (flags & CLONE_SETTLS) ? (uint64_t)(uintptr_t)tls : read_fs_base();
     t->clear_tid = (flags & CLONE_CHILD_CLEARTID) ? ctid : NULL;
     t->retry.deadline = SYSCALL_NO_DEADLINE;
+    t->preempt_count = 1;   /* until task_started leaves the kernel */
 
     /* The frame switch_to pops: six callee-saved registers and a return
      * address. It returns into task_trampoline with func in r12 and arg in
@@ -248,7 +392,9 @@ task_clone(int (*func)(void *), void *stack, int flags, void *arg,
 
     if (flags & CLONE_PARENT_SETTID) *ptid = t->tid;
     t->state = TASK_READY;
-    return t->tid;
+    int tid = t->tid;
+    preempt_enable();
+    return tid;
 }
 
 static int
@@ -264,6 +410,11 @@ void
 task_exit(int code)
 {
     (void)code;
+
+    /* Reached from SYS_exit, from __unmapself, and from task_trampoline when
+     * the thread's function returns -- the last of those outside the kernel.
+     * A dead task never leaves, so the count is never lowered again. */
+    preempt_disable();
 
     /* The last thread leaving is the system ending, as before. */
     if (!current || live_tasks() <= 1) {
@@ -287,6 +438,7 @@ task_exit(int code)
 void
 task_exit_unmapping(void *base, size_t size)
 {
+    preempt_disable();
     unmap_base = (uintptr_t)base;
     unmap_size = size;
     task_exit(0);
