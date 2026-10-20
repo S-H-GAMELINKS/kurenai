@@ -57,3 +57,33 @@ task_trampoline:
     movl %eax, %edi
     call task_exit
     ud2
+
+/* void switch_from_irq(uint64_t next_rsp)
+ *
+ * The second half of switch_to, for irq_tick: the interrupted task has
+ * already been saved -- onto its own stack, by irq_tick -- and there is
+ * nothing on the IST stack worth keeping, so this only loads. Interrupts are
+ * still off from the gate; sti comes last, once rsp is the next task's, so the
+ * next tick cannot arrive while anything is half done. sti takes effect after
+ * the following instruction, which is the ret. */
+.global switch_from_irq
+switch_from_irq:
+    movq %rdi, %rsp
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    sti
+    ret
+
+/* Where a preempted task resumes: switch_to (or switch_from_irq) returns here
+ * with rsp at the irq_frame irq_tick copied onto the task's stack. task_resumed
+ * finishes the switch, and irq_resume puts back every register the tick saved,
+ * so the code that was interrupted never sees a difference. rsp is 16-byte
+ * aligned here, as a call wants. */
+.global irq_resume_task
+irq_resume_task:
+    call task_resumed
+    jmp irq_resume

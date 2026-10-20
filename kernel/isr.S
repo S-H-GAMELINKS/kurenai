@@ -86,14 +86,62 @@ isr_common:
     jmp 1b
 
 /* The timer tick. Arrives on IST1 (see kernel/irq.c), so nothing here touches
- * the interrupted stack. Counting and acknowledging need only rax, and saving
- * just that keeps the stub honest about what it clobbers: no C is called, so
- * no SSE register can be disturbed behind the interrupted code's back. */
+ * the interrupted stack -- not even the red zone below its rsp.
+ *
+ * Everything the interrupted code could be using is saved, because it can be
+ * anything: CRuby in the middle of a memcpy with half its state in xmm
+ * registers. The fifteen general registers go on the IST stack, the x87/SSE
+ * state after them with fxsave, and the frame that makes is handed to
+ * irq_tick in kernel/task.c. The layout is struct irq_frame there.
+ *
+ * Most ticks return here and the same state goes back. A tick that preempts
+ * does not return: irq_tick copies this frame onto the interrupted task's own
+ * stack, where irq_resume will find it, and switches to another task. */
 .global irq_timer
 irq_timer:
     pushq %rax
-    lock incq irq_ticks(%rip)
-    movb $0x20, %al         /* end of interrupt, to the master PIC */
-    outb %al, $0x20
+    pushq %rbx
+    pushq %rcx
+    pushq %rdx
+    pushq %rsi
+    pushq %rdi
+    pushq %rbp
+    pushq %r8
+    pushq %r9
+    pushq %r10
+    pushq %r11
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+    /* 40 bytes from the CPU and 120 from above leave rsp 16-byte aligned,
+     * which both fxsave and the call need. */
+    subq $512, %rsp
+    fxsave64 (%rsp)
+    movq %rsp, %rdi
+    cld
+    call irq_tick
+
+/* Restores a frame built by irq_timer and returns from the interrupt. Reached
+ * by falling through, or -- for a task that was preempted -- by switch_to
+ * returning into it with rsp at the copy irq_tick made. */
+.global irq_resume
+irq_resume:
+    fxrstor64 (%rsp)
+    addq $512, %rsp
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %r11
+    popq %r10
+    popq %r9
+    popq %r8
+    popq %rbp
+    popq %rdi
+    popq %rsi
+    popq %rdx
+    popq %rcx
+    popq %rbx
     popq %rax
     iretq

@@ -125,7 +125,7 @@ pit_init(void)
 
 /* ---------------------------------------------------------------- ticks */
 
-/* Incremented by irq_timer in isr.S and nowhere else. */
+/* Incremented by irq_tick in kernel/task.c, for every tick, and nowhere else. */
 volatile uint64_t irq_ticks;
 
 uint64_t
