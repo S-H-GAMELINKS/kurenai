@@ -47,6 +47,11 @@ module Kernel
     NR_GETSOCKOPT = 55
     NR_ACCEPT4    = 288
 
+    # Not an errno: never returned to CRuby. kernel/bridge.c sees it, waits for
+    # the next tick outside the VM, and makes the same call again. The value is
+    # Linux's ERESTARTSYS, which is kernel-internal there for the same reason.
+    WAIT_AGAIN = -512
+
     EBADF  = -9
     EAGAIN = -11
     EPIPE  = -32
@@ -194,6 +199,10 @@ module Kernel
     def self.read_console(buffer, count)
       return read_raw(buffer, count) unless TTY.canonical?
 
+      # serial_read waits in C for its first byte, which would hold the VM for
+      # as long as nobody types. So it is only called once a byte is there.
+      return WAIT_AGAIN unless serial_ready?
+
       length = serial_read(buffer, count)
       return length if length <= 0
 
@@ -219,6 +228,10 @@ module Kernel
     # Reline asks whether a byte has arrived without committing to waiting for
     # one. Returning 0 there is a real answer, not end of file, and the caller
     # reads it as nil.
+    #
+    # Otherwise this waits the way Poll.wait does: one look per dispatch, and
+    # WAIT_AGAIN to be asked again after the next tick, with the VTIME deadline
+    # held by the bridge across the retries.
     def self.read_raw(buffer, count)
       minimum = TTY.min_bytes
       deadline = TTY.time_tenths > 0 ? clock_millis + TTY.time_tenths * 100 : nil
@@ -227,9 +240,10 @@ module Kernel
         return serial_ready? ? serial_read_ready(buffer, count) : 0
       end
 
-      until serial_ready?
-        return 0 if deadline && clock_millis >= deadline
-        idle
+      unless serial_ready?
+        held = held_deadline(deadline || -1)
+        return 0 if held != -1 && clock_millis >= held
+        return WAIT_AGAIN
       end
 
       length = serial_read_ready(buffer, count)

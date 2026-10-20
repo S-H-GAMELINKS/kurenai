@@ -17,7 +17,12 @@
  *
  *   Exceptions. There is nothing above this frame to catch one. An exception
  *   that escapes has to be turned back into an errno, or it unwinds into
- *   CRuby, which has no idea the VM exists. */
+ *   CRuby, which has no idea the VM exists.
+ *
+ * And one rule about time: a dispatch never waits. There is one VM for every
+ * thread, so a caller sitting in it would stop all the others. A call that
+ * has to wait answers WAIT_AGAIN instead, and the waiting happens here, in C,
+ * outside the VM: until the next tick, and then the same call again. */
 
 #include <errno.h>
 #include <stdint.h>
@@ -36,6 +41,27 @@ static uint64_t routed[ROUTE_WORDS];
 
 static int in_dispatch;
 static struct RClass *syscall_module;
+
+/* Kernel::Syscall::WAIT_AGAIN. Linux's ERESTARTSYS, and like it, never seen by
+ * the program making the call. */
+#define WAIT_AGAIN (-512)
+
+/* The deadline of the call being retried, in milliseconds since boot, or -1
+ * for none. Set by the first dispatch of a call and kept until the call
+ * finishes, so a timeout counts from when the program asked rather than from
+ * the latest retry. */
+#define NO_DEADLINE (-1)
+static mrb_int held_deadline = NO_DEADLINE;
+static int retrying;
+
+/* The VM's C recursion, and lwIP's beneath it, runs on this rather than on the
+ * caller's stack. It does not need to be per caller: there is only ever one
+ * dispatch at a time, which is what in_dispatch enforces. Its own stack also
+ * means a caller with a small one -- musl gives a thread 128KB unless asked --
+ * is not the one that decides how deep the Ruby kernel may go. */
+static uint8_t dispatch_stack[1024 * 1024] __attribute__((aligned(16)));
+
+long call_on_stack(long (*fn)(void *), void *arg, void *stack_top);
 
 void
 bridge_route(long number)
@@ -199,6 +225,20 @@ prim_serial_read_ready(mrb_state *mrb, mrb_value self)
     while (n < count && serial_data_ready())
         out[n++] = (char)serial_getc();
     return mrb_int_value(mrb, n);
+}
+
+/* What the deadline of the call in progress is. The first dispatch of a call
+ * proposes one and has it kept; a retry of the same call gets the kept one
+ * back, whatever it proposes. */
+static mrb_value
+prim_held_deadline(mrb_state *mrb, mrb_value self)
+{
+    mrb_int proposed;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &proposed);
+    if (!retrying) held_deadline = proposed;
+    return mrb_int_value(mrb, held_deadline);
 }
 
 /* Lets the CPU rest between polls, until the next tick: at most a
@@ -371,6 +411,8 @@ bridge_init(mrb_state *mrb)
                                prim_serial_ready, MRB_ARGS_NONE());
     mrb_define_module_function(mrb, syscall_module, "serial_read_ready",
                                prim_serial_read_ready, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mrb, syscall_module, "held_deadline",
+                               prim_held_deadline, MRB_ARGS_REQ(1));
     mrb_define_module_function(mrb, syscall_module, "idle",
                                prim_idle, MRB_ARGS_NONE());
     mrb_define_module_function(mrb, syscall_module, "poke32",
@@ -434,6 +476,19 @@ dispatch_in_ruby(mrb_state *mrb, long n, long a1, long a2, long a3,
     return ret;
 }
 
+struct dispatch_call {
+    mrb_state *mrb;
+    long n, a[6];
+};
+
+static long
+dispatch_trampoline(void *arg)
+{
+    struct dispatch_call *call = arg;
+    return dispatch_in_ruby(call->mrb, call->n, call->a[0], call->a[1],
+                            call->a[2], call->a[3], call->a[4], call->a[5]);
+}
+
 long
 kernel_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6)
 {
@@ -445,9 +500,19 @@ kernel_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6)
           while(v){b[i++]=(char)('0'+v%10);v/=10;}
           serial_puts("<sys "); while(i--) serial_putc(b[i]); serial_puts(">"); }
 #endif
-        in_dispatch = 1;
-        long ret = dispatch_in_ruby(mrb, n, a1, a2, a3, a4, a5, a6);
-        in_dispatch = 0;
+        struct dispatch_call call = { mrb, n, { a1, a2, a3, a4, a5, a6 } };
+        long ret;
+        for (;;) {
+            in_dispatch = 1;
+            ret = call_on_stack(dispatch_trampoline, &call,
+                                dispatch_stack + sizeof(dispatch_stack));
+            in_dispatch = 0;
+            if (ret != WAIT_AGAIN) break;
+            retrying = 1;
+            irq_wait();
+        }
+        retrying = 0;
+        held_deadline = NO_DEADLINE;
 #ifdef BRIDGE_TRACE
         { char b[16]; int i=0; long v=ret<0?-ret:ret; if(ret<0)serial_putc('-');
           if(!v)b[i++]='0'; while(v){b[i++]=(char)('0'+v%10);v/=10;}

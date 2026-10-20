@@ -10,13 +10,18 @@
 # four syscalls differ only in how they say what they want and how they report
 # what they got.
 #
-# The loop that waits is the interesting part. It runs inside a single
-# Kernel::Syscall.dispatch, which may not return for as long as the caller is
-# prepared to wait, and kernel/bridge.c only restores the mruby GC arena when a
-# dispatch returns. So nothing in here may allocate -- everything is Fixnum
-# arithmetic on locals -- and every hundred milliseconds it gives up and returns
-# EINTR, so the arena is restored and CRuby, which treats EINTR as "go round
-# again" and recomputes its own deadline, tries afresh.
+# Nothing in here waits. A dispatch that does not return holds the VM, and
+# there is one VM for every thread the kernel runs: one caller sitting in a
+# poll would stop every other caller's write. So each dispatch looks once, and
+# if nothing is ready and the deadline has not passed it answers
+# Syscall::WAIT_AGAIN, which never reaches CRuby. kernel/bridge.c takes that
+# to mean "wait for the next tick and ask me again", leaves the VM, and repeats
+# the same call with the same arguments.
+#
+# The deadline has to survive that. Each retry is a fresh dispatch that would
+# compute "now plus the timeout" again and never expire, so the deadline is
+# computed once and held by the bridge for the length of the call -- that is
+# what Syscall.held_deadline is for.
 module Kernel
   module Poll
     POLLIN   = 0x001
@@ -31,10 +36,7 @@ module Kernel
     POLLFD_EVENTS = 4
     POLLFD_REVENTS = 6
 
-    EINTR = -4
-
-    # How long one dispatch is allowed to run before handing control back.
-    SLICE_MS = 100
+    NO_DEADLINE = -1
 
     # What a descriptor could do right now, masked to what was asked about.
     # POLLERR, POLLHUP and POLLNVAL are reported whether or not they were asked
@@ -95,25 +97,21 @@ module Kernel
       ready
     end
 
-    # Waits until the block reports something ready, the deadline passes, or the
-    # slice runs out. deadline is in milliseconds since boot, or nil to wait
-    # indefinitely.
+    # One look. Returns what the block found ready, 0 once the deadline has
+    # passed, or Syscall::WAIT_AGAIN to be asked again. deadline is in
+    # milliseconds since boot, or nil to wait indefinitely.
     def self.wait(deadline)
-      started = Syscall.clock_millis
-      loop do
-        # Before the first look, so that a poll with a zero timeout still sees
-        # whatever has arrived.
-        Net.pump if E1000.up?
+      # Before looking, so that a poll with a zero timeout still sees whatever
+      # has arrived.
+      Net.pump if E1000.up?
 
-        ready = yield
-        return ready if ready > 0
+      ready = yield
+      return ready if ready > 0
 
-        now = Syscall.clock_millis
-        return 0 if deadline && now >= deadline
-        return EINTR if now - started >= SLICE_MS
+      held = Syscall.held_deadline(deadline || NO_DEADLINE)
+      return 0 if held != NO_DEADLINE && Syscall.clock_millis >= held
 
-        Syscall.idle
-      end
+      Syscall::WAIT_AGAIN
     end
 
     # ---------------------------------------------------------------- poll
@@ -201,10 +199,9 @@ module Kernel
         hits
       end
 
-      # On EINTR the caller's sets must be left exactly as they were: CRuby
-      # restores its own copies and retries, and Linux does not touch them
-      # either.
-      return EINTR if ready == EINTR
+      # Not finished: the sets are left exactly as they were, because the
+      # same call is coming back with the same pointers.
+      return ready if ready == Syscall::WAIT_AGAIN
 
       write_set(readfds, nfds, got_r_lo, got_r_hi)
       write_set(writefds, nfds, got_w_lo, got_w_hi)

@@ -261,6 +261,7 @@ set_source_files_properties(net.c PROPERTIES
 add_executable(kernel64.elf
   entry64.S
   isr.S
+  switch.S
   idt.c
   irq.c
   main.c
