@@ -579,6 +579,11 @@ if(QEMU_EXECUTABLE)
            # input. With no input the system sits at the prompt, which is
            # correct, so the summary printed after the REPL belongs to the
            # test that actually drives it.
+           # The irq line counts ticks rather than announcing them: twenty
+           # milliseconds by the TSC, and the number of timer interrupts that
+           # arrived in them. A PIC left masked or a gate pointing nowhere both
+           # print 0, which this does not match.
+           #
            # The e1000 line is evidence rather than decoration: printing an
            # address means ruby/kernel/pci.rb found the card in configuration
            # space through two port instructions, that its BAR was read
@@ -624,7 +629,7 @@ if(QEMU_EXECUTABLE)
            # answers so the server can name itself, musl resolves a numeric
            # address with no resolver behind it, and socket.rb was found in the
            # Ruby filesystem -- Addrinfo is defined there, not in the C half.
-           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|INFO  WEBrick 1[.]9[.]2|WEBrick::HTTPServer#start: pid=1 port=80|http: serving on 0[.]0[.]0[.]0:80"
+           "-DEXPECT=boot ok|traps ok|irq: timer 1000 Hz, [1-9][0-9]* ticks in 20 ms|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|INFO  WEBrick 1[.]9[.]2|WEBrick::HTTPServer#start: pid=1 port=80|http: serving on 0[.]0[.]0[.]0:80"
            # Nothing may reach rb_bug: CRuby's answer to an impossible libc
            # result is to abort, and it has no way to say so on this machine.
            # ThreadError likewise, because pthread_create refusing is a thing

@@ -264,6 +264,7 @@ add_executable(kernel64.elf
   entry64.S
   isr.S
   idt.c
+  irq.c
   main.c
   serial.c
   vm.c

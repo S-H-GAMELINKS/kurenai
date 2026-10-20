@@ -20,6 +20,9 @@ kernel_main(void)
     timer_init();
     serial_puts("timer ok\n");
 
+    /* After the TSC is calibrated, because it is how the tick is checked. */
+    irq_init();
+
     libc_init();
     serial_puts("libc ok\n");
 
