@@ -539,6 +539,7 @@ add_test(NAME verify_cruby_cross COMMAND ${CMAKE_COMMAND}
 # machinery with no output at all.
 set(IMAGE_RUBY
   ${CMAKE_SOURCE_DIR}/ruby/userland/init.rb
+  ${CMAKE_SOURCE_DIR}/ruby/files/webrick_kernel.rb
   ${CMAKE_SOURCE_DIR}/ruby/kernel/vfs.rb
   ${CMAKE_SOURCE_DIR}/ruby/kernel/fd.rb
   ${CMAKE_SOURCE_DIR}/ruby/kernel/tty.rb
@@ -604,18 +605,26 @@ if(QEMU_EXECUTABLE)
            # does not cover is a connection actually arriving, which is what
            # CRuby's own TCPServer will be asked to do next.
            #
-           # The http line is CRuby's own TCPServer: a descriptor, a bind, a
-           # listen and an IO.select, all serviced by the Ruby kernel. It is the
-           # last line this check looks for, because the kernel stays there --
-           # it is a web server, and irb is behind a keystroke now. Which is
-           # what verify_irb sends.
+           # The WEBrick lines say require "webrick" got through everything it
+           # loads -- time and so date_core, uri, erb, digest, etc -- and that
+           # a server was made, which means its listener was: CRuby's own
+           # TCPServer, a descriptor, a bind and a listen, all serviced by the
+           # Ruby kernel. The http line is printed from WEBrick's start
+           # callback, as its select is about to run. It is the last line this
+           # check looks for, because the kernel stays there -- it is a web
+           # server, and irb is behind a keystroke. Which is what verify_irb
+           # sends.
+           #
+           # ThreadError below matters more now: WEBrick would start a thread
+           # per connection, and ruby/files/webrick_kernel.rb is what says it
+           # does not.
            #
            # The socket lines say three separate things: the constant tables
            # mkconstants.rb generated survived the cross compile, uname(2)
            # answers so the server can name itself, musl resolves a numeric
            # address with no resolver behind it, and socket.rb was found in the
            # Ruby filesystem -- Addrinfo is defined there, not in the C half.
-           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|http: serving on 0[.]0[.]0[.]0:80"
+           "-DEXPECT=boot ok|traps ok|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|INFO  WEBrick 1[.]9[.]2|WEBrick::HTTPServer#start: pid=1 port=80|http: serving on 0[.]0[.]0[.]0:80"
            # Nothing may reach rb_bug: CRuby's answer to an impossible libc
            # result is to abort, and it has no way to say so on this machine.
            # ThreadError likewise, because pthread_create refusing is a thing
@@ -646,9 +655,11 @@ if(QEMU_EXECUTABLE)
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/boot_serial.cmake)
 
   # The whole stack, end to end, from outside the machine: a request made by
-  # this process is answered by CRuby's TCPServer running on a kernel whose
-  # socket policy is Ruby, whose TCP is lwIP, and whose network card is driven
-  # by Ruby.
+  # this process is answered by WEBrick, on CRuby's TCPServer, running on a
+  # kernel whose socket policy is Ruby, whose TCP is lwIP, and whose network
+  # card is driven by Ruby. Each request is its own connection, so the second
+  # one is also a check that the first was finished and the accept loop came
+  # back round -- with one thread, nothing else would serve it.
   #
   # The driver watches the console and knocks the moment the kernel says it is
   # listening, because the demo gives way to irb after a couple of seconds and
@@ -668,6 +679,7 @@ if(QEMU_EXECUTABLE)
            # forward is refused until then, so knocking early fails.
            --ready "http: serving"
            --expect "hello from a Ruby kernel"
+           --server "WEBrick/1.9.2"
            --seconds 45)
 
   # Drives irb through a stand-in terminal, exercising the three things that

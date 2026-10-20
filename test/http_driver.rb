@@ -7,7 +7,7 @@
 #
 #   ruby http_driver.rb --qemu QEMU --kernel ELF --log FILE --port N
 #                       [--ready PATTERN] [--requests N] [--expect TEXT]
-#                       [--seconds N] [--until PATTERN]
+#                       [--server TEXT] [--seconds N] [--until PATTERN]
 
 require "optparse"
 require "net/http"
@@ -21,6 +21,9 @@ OptionParser.new do |o|
   o.on("--port N")        { |v| options[:port] = v.to_i }
   o.on("--requests N")    { |v| options[:requests] = v.to_i }
   o.on("--expect TEXT")   { |v| options[:expect] = v }
+  # Who answered. The body says the request reached the kernel; the Server
+  # header says which program inside it wrote the reply.
+  o.on("--server TEXT")   { |v| options[:server] = v }
   # What the kernel prints when it is ready to be asked. An option rather than
   # a constant because it is a promise between two files, and the last time it
   # was written into this one, changing the wording in the other made the test
@@ -57,7 +60,7 @@ qemu_command = [
 def request(port, path)
   Net::HTTP.start("127.0.0.1", port, open_timeout: 5, read_timeout: 5) do |http|
     response = http.get(path)
-    [response.code, response.body]
+    [response.code, response.body, response["Server"]]
   end
 end
 
@@ -83,8 +86,7 @@ IO.popen(qemu_command, "r+") do |qemu|
       if listening && asked < options[:requests]
         asked += 1
         begin
-          code, body = request(options[:port], "/request-#{asked}")
-          responses << [code, body]
+          responses << request(options[:port], "/request-#{asked}")
         rescue => e
           failures << "request #{asked}: #{e.class}: #{e.message}"
         end
@@ -109,10 +111,13 @@ end
 if responses.length < options[:requests]
   problems << "only #{responses.length} of #{options[:requests]} requests answered"
 end
-responses.each_with_index do |(code, body), i|
+responses.each_with_index do |(code, body, server), i|
   problems << "request #{i + 1} answered #{code}" unless code == "200"
   if options[:expect] && !body.to_s.include?(options[:expect])
     problems << "request #{i + 1} body was #{body.inspect}"
+  end
+  if options[:server] && !server.to_s.include?(options[:server])
+    problems << "request #{i + 1} came from server #{server.inspect}"
   end
 end
 

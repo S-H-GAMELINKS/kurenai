@@ -71,55 +71,42 @@ begin
   puts "socket: AF_INET #{Socket::AF_INET}, SOMAXCONN #{Socket::SOMAXCONN}"
   puts "socket: hostname #{Socket.gethostname}"
   puts "socket: Addrinfo #{Addrinfo.tcp("10.0.2.15", 80).inspect}"
-  # A server, with nothing above it. Plain CRuby, unmodified: the descriptor,
-  # the bind, the listen, the accept and the wait are the Ruby kernel's, the TCP
-  # is lwIP's, and the frames are carried by a driver written in Ruby.
+
+  # WEBrick, on top of that. The listener is CRuby's own TCPServer --
+  # WEBrick makes it through Socket.tcp_server_sockets -- and the accept loop is
+  # WEBrick's: one select over the listeners and a shutdown pipe, a
+  # non-blocking accept, and a servlet per path. /webrick_kernel.rb takes away
+  # the two threads WEBrick would start and nothing else.
   #
   # It serves until somebody types something. A time limit was tried first and
   # was wrong: it made a server that could only be reached by a program fast
   # enough to catch the window, which is to say not by hand -- and a web server
   # nobody can visit is not one. But a blocking accept with no way out would
   # mean irb was only reachable on a machine with no network, so the console is
-  # watched alongside the listener.
-  #
-  # Watching both with one select is also exactly the shape WEBrick's accept
-  # loop has, where the second descriptor is its shutdown pipe. And IO.select
-  # rather than a bare accept is deliberate: it lowers to select(2) where accept
-  # lowers to poll, so the call that has to work later is the one being used
-  # here.
-  server = TCPServer.new("0.0.0.0", 80)
-  puts "http: serving on #{server.local_address.ip_address}:" \
-       "#{server.local_address.ip_port}, press Enter for irb"
+  # one more descriptor in WEBrick's select, and a keystroke on it is a stop.
+  require "webrick"
+  require "webrick_kernel"
 
-  body = "hello from a Ruby kernel\n"
-  served = 0
+  # There is no resolver, so a reverse lookup of every peer would only be a
+  # wait for an answer that cannot come.
+  server = WEBrick::HTTPServer.new(BindAddress: "0.0.0.0", Port: 80,
+                                   DoNotReverseLookup: true)
+  server.mount_proc("/") do |_request, response|
+    response.content_type = "text/plain"
+    response.body = "hello from a Ruby kernel\n"
+  end
+  server.stop_on_console(STDIN)
 
-  loop do
-    ready = IO.select([server, STDIN], nil, nil, 0.5)
-    next unless ready
-
-    if ready[0].include?(STDIN)
-      # Take the keystroke, so Reline does not find it waiting for it.
-      begin
-        STDIN.read_nonblock(64)
-      rescue IO::WaitReadable, EOFError
-      end
-      break
-    end
-
-    client = server.accept
-    request = client.gets.to_s.strip
-    puts "http: #{request} from #{client.peeraddr[3]}"
-    client.write("HTTP/1.1 200 OK\r\n" \
-                 "Content-Type: text/plain\r\n" \
-                 "Content-Length: #{body.bytesize}\r\n" \
-                 "Connection: close\r\n\r\n#{body}")
-    client.close
-    served += 1
+  # Printed from inside start rather than before it, because that is when the
+  # select is about to run; the tests knock as soon as they see this line.
+  server.config[:StartCallback] = proc do
+    address = server.listeners.first.local_address
+    puts "http: serving on #{address.ip_address}:#{address.ip_port}, " \
+         "press Enter for irb"
   end
 
-  server.close
-  puts "http: served #{served} requests"
+  server.start
+  puts "http: stopped"
 rescue Exception => e
   puts "socket failed: #{e.class}: #{e.message}"
   puts e.backtrace.first(8).join("\n") if e.backtrace
