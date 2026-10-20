@@ -46,6 +46,18 @@ module Kernel
     NR_SETSOCKOPT = 54
     NR_GETSOCKOPT = 55
     NR_ACCEPT4    = 288
+    NR_PREAD64    = 17
+    NR_PWRITE64   = 18
+    NR_FTRUNCATE  = 77
+    NR_GETDENTS64 = 217
+    NR_RENAME     = 82
+    NR_RENAMEAT   = 264
+    NR_RENAMEAT2  = 316
+    NR_MKDIR      = 83
+    NR_MKDIRAT    = 258
+    NR_RMDIR      = 84
+    NR_UNLINK     = 87
+    NR_UNLINKAT   = 263
 
     # Not an errno: never returned to CRuby. kernel/bridge.c sees it, waits for
     # the next tick outside the VM, and makes the same call again. The value is
@@ -61,6 +73,22 @@ module Kernel
     EFAULT = -14
     ENOSYS = -38
     EMFILE = -24
+    EEXIST = -17
+    ENOTDIR = -20
+    EISDIR = -21
+    ENOTEMPTY = -39
+
+    # open(2) flags, x86_64.
+    O_ACCMODE   = 0o3
+    O_WRONLY    = 0o1
+    O_RDWR      = 0o2
+    O_CREAT     = 0o100
+    O_EXCL      = 0o200
+    O_TRUNC     = 0o1000
+    O_APPEND    = 0o2000
+    O_DIRECTORY = 0o200000
+
+    AT_REMOVEDIR = 0x200
 
     # struct iovec is { void *base; size_t len; } on x86_64.
     IOVEC_SIZE = 16
@@ -69,9 +97,12 @@ module Kernel
     # at are filled; the rest stays zero, which is a truthful description of a
     # file that has no owner, no times and no device.
     STAT_SIZE       = 144
+    STAT_INO        = 8
+    STAT_NLINK      = 16
     STAT_MODE       = 24    # st_mode, 4 bytes, followed by st_uid
     STAT_ST_SIZE    = 48
     STAT_BLKSIZE    = 56
+    STAT_MTIME      = 88    # st_mtim: seconds, then nanoseconds
 
     S_IFREG  = 0o100000
     S_IFDIR  = 0o040000
@@ -86,8 +117,8 @@ module Kernel
       when NR_WRITE  then sys_write(a1, a2, a3)
       when NR_WRITEV then sys_writev(a1, a2, a3)
       when NR_READ   then sys_read(a1, a2, a3)
-      when NR_OPEN   then sys_open(a1)
-      when NR_OPENAT then sys_open(a2)      # relative paths are not supported
+      when NR_OPEN   then sys_open(a1, a2)
+      when NR_OPENAT then sys_open(a2, a3)  # relative paths are not supported
       when NR_CLOSE  then sys_close(a1)
       when NR_FSTAT  then sys_fstat(a1, a2)
       when NR_STAT, NR_LSTAT then sys_stat(a1, a2)
@@ -113,6 +144,18 @@ module Kernel
       when NR_SETSOCKOPT   then Sockets.sys_setsockopt(a1, a2, a3, a4, a5)
       when NR_GETSOCKOPT   then Sockets.sys_getsockopt(a1, a2, a3, a4, a5)
       when NR_SHUTDOWN     then Sockets.sys_shutdown(a1, a2)
+      when NR_PREAD64      then sys_pread(a1, a2, a3, a4)
+      when NR_PWRITE64     then sys_pwrite(a1, a2, a3, a4)
+      when NR_FTRUNCATE    then sys_ftruncate(a1, a2)
+      when NR_GETDENTS64   then sys_getdents64(a1, a2, a3)
+      when NR_RENAME       then sys_rename(a1, a2)
+      when NR_RENAMEAT, NR_RENAMEAT2 then sys_rename(a2, a4)
+      when NR_MKDIR        then sys_mkdir(a1)
+      when NR_MKDIRAT      then sys_mkdir(a2)
+      when NR_RMDIR        then sys_rmdir(a1)
+      when NR_UNLINK       then sys_unlink(a1)
+      when NR_UNLINKAT
+        (a3 & AT_REMOVEDIR) != 0 ? sys_rmdir(a2) : sys_unlink(a2)
       else ENOSYS
       end
     end
@@ -133,6 +176,11 @@ module Kernel
         return EAGAIN if written == :full
         return EPIPE if written == :broken
         return written
+      end
+
+      if FD.file?(fd)
+        written = FD.write_file(fd, buffer, count)
+        return written.nil? ? EBADF : written
       end
 
       written = FD.write_pipe(fd, buffer, count)
@@ -179,6 +227,7 @@ module Kernel
       return EBADF if length.nil?
       return EAGAIN if length == :empty
       return ECONNRESET if length == :reset
+      return EISDIR if length == :directory
 
       length
     end
@@ -262,11 +311,39 @@ module Kernel
       0
     end
 
-    def self.sys_open(path_address)
+    # What a descriptor may do is decided here, once, from the flags; FD only
+    # enforces it. A file from the image becomes writable when something opens
+    # it for writing -- see VFS.make_writable -- not when it is first written,
+    # so O_TRUNC can take effect at once.
+    def self.sys_open(path_address, flags)
       path = cstring(path_address)
-      return ENOENT unless VFS.exist?(path)
+      return ENOENT if path.empty?
 
-      number = FD.open_file(path)
+      if VFS.directory?(path)
+        return EISDIR if (flags & O_ACCMODE) != 0
+        number = FD.open_directory(path)
+        return number.nil? ? EMFILE : number
+      end
+      return ENOTDIR if (flags & O_DIRECTORY) != 0 && VFS.exist?(path)
+
+      node = VFS.lookup(path)
+      if node.nil?
+        return ENOENT if (flags & O_CREAT) == 0
+        node = VFS.create(path)
+        return ENOENT if node.nil?
+      elsif (flags & O_CREAT) != 0 && (flags & O_EXCL) != 0
+        return EEXIST
+      end
+
+      mode = flags & O_ACCMODE
+      readable = mode != O_WRONLY
+      writable = mode != 0
+      if writable
+        return ENOMEM unless VFS.make_writable(node)
+        VFS.truncate(node, 0) if (flags & O_TRUNC) != 0
+      end
+
+      number = FD.open_file(path, node, readable, writable, (flags & O_APPEND) != 0)
       return EMFILE if number.nil?
 
       count_open
@@ -316,10 +393,37 @@ module Kernel
         return 0
       end
 
-      poke64(address + STAT_MODE, S_IFREG | 0o444)
-      poke64(address + STAT_ST_SIZE, file[:size])
-      poke64(address + STAT_BLKSIZE, 1024)
+      if file[:directory]
+        describe_directory(address, VFS.directory_ino(file[:path]) || 0)
+        return 0
+      end
+
+      describe_file(address, file[:node])
       0
+    end
+
+    # A file's struct stat. mtime matters more than it looks: WEBrick answers a
+    # browser's If-Modified-Since by comparing it, and with every mtime at zero
+    # an edited page was "not modified" for ever. It is time since boot -- the
+    # only clock there is -- which is enough for it to move forward when a file
+    # is written.
+    def self.describe_file(address, node)
+      memzero(address, STAT_SIZE)
+      poke64(address + STAT_INO, node[:ino])
+      poke64(address + STAT_NLINK, 1)
+      poke64(address + STAT_MODE, S_IFREG | 0o644)
+      poke64(address + STAT_ST_SIZE, node[:size])
+      poke64(address + STAT_BLKSIZE, 1024)
+      poke64(address + STAT_MTIME, node[:mtime] / 1000)
+      poke64(address + STAT_MTIME + 8, (node[:mtime] % 1000) * 1_000_000)
+    end
+
+    def self.describe_directory(address, ino)
+      memzero(address, STAT_SIZE)
+      poke64(address + STAT_INO, ino)
+      poke64(address + STAT_NLINK, 2)
+      poke64(address + STAT_MODE, S_IFDIR | 0o755)
+      poke64(address + STAT_BLKSIZE, 1024)
     end
 
     ERANGE = -34
@@ -411,9 +515,10 @@ module Kernel
       2
     end
 
-    # Does this path exist? Everything served is readable and nothing is
-    # writable or executable, so the mode the caller asks about does not change
-    # the answer.
+    # Does this path exist? Everything is readable and writable -- a file from
+    # the image is copied the first time it is opened for writing -- and
+    # nothing is executable, which no caller has asked about yet. So the mode
+    # does not change the answer.
     def self.sys_access(path_address)
       path = cstring(path_address)
       return 0 if VFS.exist?(path) || VFS.directory?(path)
@@ -429,20 +534,118 @@ module Kernel
       path = cstring(path_address)
 
       if VFS.directory?(path)
-        memzero(address, STAT_SIZE)
-        poke64(address + STAT_MODE, S_IFDIR | 0o555)
-        poke64(address + STAT_BLKSIZE, 1024)
+        describe_directory(address, VFS.directory_ino(path))
         return 0
       end
 
-      size = VFS.size(path)
-      return ENOENT if size.nil?
+      node = VFS.lookup(path)
+      return ENOENT if node.nil?
 
-      memzero(address, STAT_SIZE)
-      poke64(address + STAT_MODE, S_IFREG | 0o444)
-      poke64(address + STAT_ST_SIZE, size)
-      poke64(address + STAT_BLKSIZE, 1024)
+      describe_file(address, node)
       0
+    end
+
+    # ---------------------------------------------------------------- files
+
+    def self.sys_pread(fd, buffer, count, offset)
+      file = FD.entry(fd)
+      return EBADF unless file && file[:node] && file[:readable]
+
+      FD.read_at(file, buffer, count, offset)
+    end
+
+    def self.sys_pwrite(fd, buffer, count, offset)
+      file = FD.entry(fd)
+      return EBADF unless file && file[:node] && file[:writable]
+
+      written = VFS.write(file[:node], offset, buffer, count)
+      written.nil? ? ENOMEM : written
+    end
+
+    def self.sys_ftruncate(fd, length)
+      file = FD.entry(fd)
+      return EBADF unless file && file[:node] && file[:writable]
+
+      VFS.truncate(file[:node], length).nil? ? ENOMEM : 0
+    end
+
+    def self.sys_unlink(path_address)
+      path = cstring(path_address)
+      return EISDIR if VFS.directory?(path)
+
+      VFS.unlink(path) ? 0 : ENOENT
+    end
+
+    def self.sys_rename(from_address, to_address)
+      from = cstring(from_address)
+      to = cstring(to_address)
+      return EINVAL if VFS.directory?(from)       # files only, for now
+      return EISDIR if VFS.directory?(to)
+      return ENOENT unless VFS.exist?(from)
+      return ENOENT unless VFS.directory?(VFS.parent(to))
+
+      VFS.rename(from, to)
+      0
+    end
+
+    def self.sys_mkdir(path_address)
+      path = cstring(path_address)
+      return EEXIST if VFS.directory?(path) || VFS.exist?(path)
+      return ENOENT unless VFS.directory?(VFS.parent(path))
+
+      VFS.mkdir(path)
+      0
+    end
+
+    def self.sys_rmdir(path_address)
+      path = cstring(path_address)
+      return ENOTDIR unless VFS.directory?(path)
+      return EINVAL if VFS.normalize(path) == "/"
+      return ENOTEMPTY unless VFS.empty_directory?(path)
+
+      VFS.rmdir(path)
+      0
+    end
+
+    # struct linux_dirent64: u64 d_ino, s64 d_off, u16 d_reclen, u8 d_type,
+    # then the NUL-terminated name, the whole record padded to eight bytes.
+    # "." and ".." come first, as readdir's callers expect; d_off is just the
+    # index of the next record, which is all anything uses it for.
+    DT_DIR = 4
+    DT_REG = 8
+
+    def self.sys_getdents64(fd, buffer, size)
+      file = FD.entry(fd)
+      return EBADF if file.nil?
+      return ENOTDIR unless file[:directory]
+
+      entries = file[:entries]
+      written = 0
+      while file[:position] < entries.length + 2
+        index = file[:position]
+        name, ino, directory =
+          if index == 0 then [".", 0, true]
+          elsif index == 1 then ["..", 0, true]
+          else entries[index - 2]
+          end
+
+        length = (19 + name.length + 1 + 7) & ~7
+        if written + length > size
+          return EINVAL if written == 0
+          break
+        end
+
+        record = buffer + written
+        memzero(record, length)
+        poke64(record, ino)
+        poke64(record + 8, index + 1)
+        poke16(record + 16, length)
+        write_bytes(record + 18, [directory ? DT_DIR : DT_REG])
+        write_bytes(record + 19, name.bytes)
+        written += length
+        file[:position] += 1
+      end
+      written
     end
 
     # ---------------------------------------------------------------- memory
@@ -450,10 +653,14 @@ module Kernel
     ENOMEM = -12
     EINVAL = -22
 
-    # Anonymous mappings get fresh pages. File mappings are answered with the
-    # address the file already occupies: the filesystem lives in the image, in
-    # read-only memory, so a read-only private mapping of it is exactly that
-    # memory. Nothing is copied.
+    # Anonymous mappings get fresh pages. A file still in the image is answered
+    # with the address it already occupies: it is read-only memory, so a
+    # read-only private mapping of it is exactly that memory, and nothing is
+    # copied. A writable file is copied into fresh pages -- a private mapping,
+    # as MAP_PRIVATE promises -- because handing out its own pages would let
+    # munmap give them back while the file still lives in them. Prism maps and
+    # then unmaps every file it parses, so this is the path require of a file
+    # written at run time takes.
     #
     # This path matters more than it looks. Prism reads source files by mapping
     # them, not by reading them, so require goes through here rather than
@@ -466,10 +673,18 @@ module Kernel
       end
 
       file = FD.entry(fd)
-      return ENOMEM if file.nil? || file[:pipe]
-      return ENOMEM if offset + length > file[:size] + 4096
+      return ENOMEM if file.nil? || file[:node].nil?
+      node = file[:node]
+      return ENOMEM if offset + length > node[:size] + 4096
 
-      file[:address] + offset
+      return node[:address] + offset unless node[:writable]
+
+      copy = Memory.allocate(length)
+      return ENOMEM if copy.nil?
+      available = node[:size] - offset
+      available = length if available > length
+      copy_out(copy, node[:address] + offset, available) if available > 0
+      copy
     end
 
     # Gives pages back. What counts as the kernel's to take back is decided in

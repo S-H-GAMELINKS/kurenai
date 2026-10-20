@@ -256,6 +256,11 @@ kernel_syscall_c(long n, long a1, long a2, long a3, long a4, long a5, long a6)
                           (const struct timespec_compat *)a4,
                           (uint32_t *)a5, (uint32_t)a6);
     case SYS_sched_yield: return task_yield();
+    /* There is no disk under the filesystem, so a file is as durable as it
+     * will ever be the moment it is written. */
+    case SYS_fsync:
+    case SYS_fdatasync:   return 0;
+
     /* One CPU: every barrier membarrier could ask for already holds. */
     case SYS_membarrier:  return 0;
 

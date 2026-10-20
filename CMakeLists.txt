@@ -552,6 +552,12 @@ if(QEMU_EXECUTABLE)
            # preempt line is a thread spinning without a syscall, which only
            # gives way if the tick takes the CPU from it.
            #
+           # The fs lines are the filesystem being written: a file created,
+           # appended to and read back, a .rb written and then required --
+           # Prism maps it, and must get a copy rather than the file's own
+           # pages -- an mtime that moves, a rename, a delete, and a directory
+           # listed through getdents64.
+           #
            # The irq line counts ticks rather than announcing them: twenty
            # milliseconds by the TSC, and the number of timer interrupts that
            # arrived in them. A PIC left masked or a gate pointing nowhere both
@@ -595,7 +601,7 @@ if(QEMU_EXECUTABLE)
            # answers so the server can name itself, musl resolves a numeric
            # address with no resolver behind it, and socket.rb was found in the
            # Ruby filesystem -- Addrinfo is defined there, not in the C half.
-           "-DEXPECT=boot ok|traps ok|irq: timer 1000 Hz, [1-9][0-9]* ticks in 20 ms|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|threads: 4 joined [[]1, 2, 3, 4[]]|threads: 200 started and finished|queue: 100 items|mutex: 1000|preempt: a spinning thread gave way|timeout: Timeout::Error|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|http: listening on 0[.]0[.]0[.]0:80|http: served 0 requests|irb 1[.0-9]* loaded|irb\\(main\\):001"
+           "-DEXPECT=boot ok|traps ok|irq: timer 1000 Hz, [1-9][0-9]* ticks in 20 ms|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|threads: 4 joined [[]1, 2, 3, 4[]]|threads: 200 started and finished|queue: 100 items|mutex: 1000|preempt: a spinning thread gave way|timeout: Timeout::Error|fs: 2 lines, 36 bytes|fs: required a file written at run time, ANSWER = 42|fs: mtime moved true|fs: /tmp holds [[]".", "..", "renamed.txt"[]]|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|http: listening on 0[.]0[.]0[.]0:80|http: served 0 requests|irb 1[.0-9]* loaded|irb\\(main\\):001"
            # Nothing may reach rb_bug: CRuby's answer to an impossible libc
            # result is to abort, and it has no way to say so on this machine.
            # ThreadError likewise: threads are real now, and failing to make one
@@ -603,7 +609,7 @@ if(QEMU_EXECUTABLE)
            # names what the kernel was asked for and did not do -- futex was
            # the first of those threads would hit -- and a futex wait inside a
            # dispatch is the one wait that could never be woken.
-           "-DEXPECT_NONE=\\[BUG\\]|rb_bug|ThreadError|threads failed|unhandled syscall|futex wait inside a dispatch|lwip: assertion failed|frames dropped"
+           "-DEXPECT_NONE=\\[BUG\\]|rb_bug|ThreadError|threads failed|fs failed|unhandled syscall|futex wait inside a dispatch|lwip: assertion failed|frames dropped"
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial.log
            # The kernel halts instead of exiting, so QEMU always runs for the
            # full timeout. Booting takes well under a second here; the margin
