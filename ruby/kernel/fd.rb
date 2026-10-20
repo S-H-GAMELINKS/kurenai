@@ -145,6 +145,13 @@ module Kernel
     # connection that is merely quiet has not ended. Once it has, the entry
     # remembers -- lwIP forgets a closed pcb, and a second read has to give the
     # same answer as the first.
+    #
+    # A negative length is the port layer saying lwIP reported an error on the
+    # connection, which in practice is the peer resetting it. That is :reset,
+    # ECONNRESET, and not the nil a missing descriptor gets: EBADF told CRuby
+    # its own descriptor was bad, and WEBrick logged a browser closing a tab as
+    # an error in itself. As on Linux, the reset is reported once and every
+    # read after it is end of file.
     def self.read_socket(file, buffer, count)
       return 0 if file[:eof]
       return :empty if file[:handle].nil?
@@ -152,7 +159,10 @@ module Kernel
       Net.pump
       length = Net.recv(file[:handle], buffer, count)
       return :empty if length == Net::WOULD_BLOCK
-      return nil if length < 0
+      if length < 0
+        file[:eof] = true
+        return :reset
+      end
 
       file[:eof] = true if length == 0
       length
@@ -172,8 +182,10 @@ module Kernel
       return :full if room == 0
 
       length = count < room ? count : room
+      # Refused by lwIP, which means the connection is gone: EPIPE, for the
+      # same reason a failed read is not EBADF.
       written = Net.send(file[:handle], buffer, length)
-      return nil if written < 0
+      return :broken if written < 0
       return :full if written == 0
 
       # Push it out now rather than at the next syscall. Waiting would leave a
