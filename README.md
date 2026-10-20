@@ -182,7 +182,7 @@ a SHA cannot.
 | irb / reline | 1.16.0 / 0.6.3, at the versions CRuby bundles |
 | lwIP | 2.2.1, the release picoruby-socket pins |
 | WEBrick | v1.9.2 |
-| mui | `8d42912`, with its ANSI terminal adapter |
+| mui | `f1168f2`, with its ANSI terminal adapter |
 
 ## What it does not do
 

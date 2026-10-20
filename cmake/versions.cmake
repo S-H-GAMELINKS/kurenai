@@ -32,10 +32,10 @@ set(WEBRICK_REF  b1684cecf9eb87cb2ae20fd52fbb80cf3e859c8a)  # v1.9.2
 
 # Set mui version
 # The editor run from irb to change the pages WEBrick serves -- a Vim-like
-# editor written in Ruby, by this kernel's author. Pinned at the commit that
-# gave it a terminal adapter of its own, so it needs no curses to run.
+# editor written in Ruby, by this kernel's author. Pinned at the master that
+# merged its ANSI terminal adapter, so it needs no curses to run.
 set(MUI_URL      https://github.com/S-H-GAMELINKS/mui.git)
-set(MUI_REF      8d4291253d9127f6855826db1a82413d61ab6b61)  # add/ansi-terminal-adapter
+set(MUI_REF      f1168f2d0c49a7a7430ce0e5221a0cb41aba7dc8)  # master
 
 # Set PicoRuby version
 # There is no tag at this commit, which is why the SHA appears bare here.
