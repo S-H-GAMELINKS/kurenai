@@ -104,6 +104,36 @@ rescue Exception => e
   puts e.backtrace.first(8).join("\n") if e.backtrace
 end
 
+# ---------------------------------------------------------------- files
+#
+# The filesystem can be written now. Files live in pages from the kernel's
+# allocator and last as long as the machine does. A file written here can be
+# required -- Prism maps it, and gets a copy -- and its mtime moves, which is
+# what lets a browser see a page change.
+begin
+  Dir.mkdir("/tmp")
+  File.write("/tmp/hello.txt", "written at run time\n")
+  File.open("/tmp/hello.txt", "a") { |f| f.puts "and appended to" }
+  puts "fs: #{File.read("/tmp/hello.txt").lines.length} lines, " \
+       "#{File.size("/tmp/hello.txt")} bytes"
+
+  File.write("/tmp/answer.rb", "ANSWER = 6 * 7\n")
+  require "/tmp/answer"
+  puts "fs: required a file written at run time, ANSWER = #{ANSWER}"
+
+  before = File.mtime("/tmp/hello.txt")
+  sleep 0.01
+  File.write("/tmp/hello.txt", "rewritten\n")
+  puts "fs: mtime moved #{File.mtime("/tmp/hello.txt") > before}"
+
+  File.rename("/tmp/hello.txt", "/tmp/renamed.txt")
+  File.delete("/tmp/answer.rb")
+  puts "fs: /tmp holds #{Dir.entries("/tmp").sort.inspect}"
+rescue Exception => e
+  puts "fs failed: #{e.class}: #{e.message}"
+  puts e.backtrace.first(8).join("\n") if e.backtrace
+end
+
 # ---------------------------------------------------------------- socket
 #
 # ext/socket is linked in and registered, but the kernel has no network yet.

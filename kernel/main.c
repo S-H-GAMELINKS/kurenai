@@ -89,6 +89,23 @@ kernel_main(void)
      * listeners at once. Both had to exist before either was useful. */
     bridge_route(23  /* SYS_select   */);
     bridge_route(270 /* SYS_pselect6 */);
+
+    /* Writing, and the rest of what a writable filesystem is asked: files are
+     * written into pages from ruby/kernel/memory.rb, directories are listed
+     * with getdents64, and names are made and removed. Policy, all of it, so
+     * Ruby's. */
+    bridge_route(17  /* SYS_pread64    */);
+    bridge_route(18  /* SYS_pwrite64   */);
+    bridge_route(77  /* SYS_ftruncate  */);
+    bridge_route(217 /* SYS_getdents64 */);
+    bridge_route(82  /* SYS_rename     */);
+    bridge_route(264 /* SYS_renameat   */);
+    bridge_route(316 /* SYS_renameat2  */);
+    bridge_route(83  /* SYS_mkdir      */);
+    bridge_route(258 /* SYS_mkdirat    */);
+    bridge_route(84  /* SYS_rmdir      */);
+    bridge_route(87  /* SYS_unlink     */);
+    bridge_route(263 /* SYS_unlinkat   */);
     serial_puts("syscall routing ok\n");
 
     /* Boot has been kernel code throughout. CRuby is not, and from here a

@@ -2,7 +2,9 @@
 #
 # The table a process sees when it calls open and read. Descriptors 0, 1 and 2
 # are the console and always exist; everything above them is a window onto a
-# file in the VFS, with the read offset kept here.
+# file in the VFS, with the offset kept here. A file descriptor holds the VFS
+# node itself rather than its path, so it follows the file if it moves to new
+# pages or loses its name.
 #
 # This is the part that makes "the kernel is written in Ruby" a statement about
 # behaviour rather than about which language the boot messages were printed
@@ -21,18 +23,34 @@ module Kernel
     # rooted for the life of the VM.
     TABLE = {}
 
-    def self.open_file(path)
-      address = VFS.address(path)
-      return nil unless address
+    def self.open_file(path, node, readable, writable, append)
+      number = next_number
+      return nil unless number
 
+      node[:opens] += 1
+      TABLE[number] = {
+        path: VFS.normalize(path),
+        node: node,
+        offset: 0,
+        readable: readable,
+        writable: writable,
+        append: append
+      }
+      number
+    end
+
+    # A directory, opened so its entries can be listed with getdents64. The
+    # entries are taken when it is opened, as [name, ino, directory?], and
+    # position counts how many have been handed out.
+    def self.open_directory(path)
       number = next_number
       return nil unless number
 
       TABLE[number] = {
         path: VFS.normalize(path),
-        address: address,
-        size: VFS.size(path),
-        offset: 0
+        directory: true,
+        entries: VFS.children(path),
+        position: 0
       }
       number
     end
@@ -111,6 +129,7 @@ module Kernel
         entry[:listening] ? Net.close_server(entry[:handle])
                           : Net.close(entry[:handle])
       end
+      VFS.closed(entry[:node]) if entry[:node]
       !TABLE.delete(number).nil?
     end
 
@@ -127,13 +146,39 @@ module Kernel
       return nil unless file
       return read_socket(file, buffer, count) if file[:socket]
       return read_pipe(file, buffer, count) if file[:pipe]
+      return :directory if file[:directory]
+      return nil unless file[:readable]
 
-      remaining = file[:size] - file[:offset]
-      remaining = 0 if remaining < 0
-      length = count < remaining ? count : remaining
-      Syscall.copy_out(buffer, file[:address] + file[:offset], length) if length > 0
+      length = read_at(file, buffer, count, file[:offset])
       file[:offset] += length
       length
+    end
+
+    # pread: the same, at a given offset, leaving the descriptor's alone.
+    def self.read_at(file, buffer, count, offset)
+      node = file[:node]
+      remaining = node[:size] - offset
+      remaining = 0 if remaining < 0
+      length = count < remaining ? count : remaining
+      Syscall.copy_out(buffer, node[:address] + offset, length) if length > 0
+      length
+    end
+
+    # Into the file, at the descriptor's offset or at the end for O_APPEND.
+    # nil when the descriptor was not opened for writing, or memory ran out.
+    def self.write_file(number, buffer, count)
+      file = TABLE[number]
+      return nil unless file && file[:node] && file[:writable]
+
+      file[:offset] = file[:node][:size] if file[:append]
+      written = VFS.write(file[:node], file[:offset], buffer, count)
+      file[:offset] += written if written
+      written
+    end
+
+    def self.file?(number)
+      file = TABLE[number]
+      !file.nil? && !file[:node].nil?
     end
 
     # Straight from lwIP's buffer into the caller's, in C. The bytes do not
@@ -220,12 +265,19 @@ module Kernel
 
     def self.seek(number, offset, whence)
       file = TABLE[number]
-      return nil if file.nil? || file[:pipe]
+      return nil if file.nil?
+
+      # rewinddir is lseek to 0 on the directory's descriptor.
+      if file[:directory] && whence == 0 && offset == 0
+        file[:position] = 0
+        return 0
+      end
+      return nil if file[:node].nil?
 
       position = case whence
                  when 0 then offset                 # SEEK_SET
                  when 1 then file[:offset] + offset # SEEK_CUR
-                 when 2 then file[:size] + offset   # SEEK_END
+                 when 2 then file[:node][:size] + offset   # SEEK_END
                  else return nil
                  end
       return nil if position < 0
