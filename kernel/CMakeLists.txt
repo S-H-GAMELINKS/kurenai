@@ -140,6 +140,12 @@ endfunction()
 
 embed_ruby_under(${GEMS_DIR}/irb/lib)
 embed_ruby_under(${GEMS_DIR}/reline/lib)
+
+# The Ruby half of date. As with socket.rb, the C half being registered is not
+# enough: require "date" is /date.rb requiring date_core.so rather than the
+# other way round.
+embed_all_ruby_under(${CRUBY_SRC}/ext/date/lib)
+
 embed_ruby_under(${CRUBY_SRC}/lib EXCLUDE
   "^bundler"      # a package manager, with no packages and no network
   "^rubygems"     # likewise

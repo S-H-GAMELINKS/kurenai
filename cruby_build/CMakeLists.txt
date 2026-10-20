@@ -109,6 +109,15 @@ list(APPEND EXT_SOURCES
   ${SOCKET_SOURCES}
   ${CRUBY_SRC}/ext/io/nonblock/nonblock.c)
 
+# date_core, because lib/time.rb requires "date" before anything else, and
+# require "time" is how a program asks for Time.parse and Time#iso8601.
+set(DATE_SOURCES
+  ${CRUBY_SRC}/ext/date/date_core.c
+  ${CRUBY_SRC}/ext/date/date_parse.c
+  ${CRUBY_SRC}/ext/date/date_strftime.c
+  ${CRUBY_SRC}/ext/date/date_strptime.c)
+list(APPEND EXT_SOURCES ${DATE_SOURCES})
+
 add_library(ruby-static STATIC
   ${RUBY_SOURCES}
   ${PRISM_SOURCES}
@@ -135,6 +144,16 @@ set_source_files_properties(${CRUBY_SRC}/ext/stringio/stringio.c PROPERTIES
   COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/stringio_extconf.h")
 set_source_files_properties(${CRUBY_SRC}/ext/io/nonblock/nonblock.c PROPERTIES
   COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/io_nonblock_extconf.h")
+
+# date_core.c, like rubysocket.h, opens with #include RUBY_EXTCONF_H.
+set_source_files_properties(
+  ${CRUBY_SRC}/ext/date/date_core.c
+  ${CRUBY_SRC}/ext/date/date_parse.c
+  ${CRUBY_SRC}/ext/date/date_strftime.c
+  ${CRUBY_SRC}/ext/date/date_strptime.c
+  PROPERTIES
+  COMPILE_DEFINITIONS "RUBY_EXTCONF_H=\"date_extconf.h\""
+  INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR};${CRUBY_SRC}/ext/date")
 
 # NOTE:
 # ext/socket cannot be given its extconf.h with -include, the way the three

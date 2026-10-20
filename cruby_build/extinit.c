@@ -19,7 +19,10 @@
  * socket.so already provided and goes on to load /socket.rb from the Ruby
  * filesystem, which is where Addrinfo#listen and Socket.tcp_server_sockets
  * live. Registering without embedding that file gives a require that succeeds
- * and an API with holes in it. */
+ * and an API with holes in it.
+ *
+ * date_core is there for require "time": lib/time.rb requires "date" first,
+ * and /date.rb is what requires date_core.so, not the other way round. */
 
 void ruby_init_ext(const char *name, void (*init)(void));
 
@@ -29,6 +32,7 @@ void Init_nonblock(void);
 void Init_stringio(void);
 void Init_ripper(void);
 void Init_socket(void);
+void Init_date_core(void);
 
 void
 Init_ext(void)
@@ -39,4 +43,5 @@ Init_ext(void)
     ruby_init_ext("stringio.so", Init_stringio);
     ruby_init_ext("ripper.so", Init_ripper);
     ruby_init_ext("socket.so", Init_socket);
+    ruby_init_ext("date_core.so", Init_date_core);
 }

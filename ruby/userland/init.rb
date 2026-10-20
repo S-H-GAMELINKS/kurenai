@@ -12,6 +12,22 @@ STDOUT.sync = true
 # stat, open, mmap and read, and the Ruby kernel answers.
 $LOAD_PATH.unshift("/")
 
+# CRuby names its encoding constants from the encoding database, which is
+# normally a dynamically loaded extension. kernel/enc.c declares the four
+# built-in encodings but cannot create the constants, so they are made here
+# from what is registered. Without them reline fails on Encoding::US_ASCII.
+# They are made first, before anything is required, because libraries other
+# than reline read them while they load.
+Encoding.list.each do |encoding|
+  name = encoding.name.gsub("-", "_").gsub(".", "_")
+  next if Encoding.const_defined?(name, false)
+  begin
+    Encoding.const_set(name, encoding)
+  rescue NameError
+    # Names that are not valid constants; nothing looks those up by constant.
+  end
+end
+
 puts "cruby #{RUBY_VERSION} on picoruby-kernel"
 puts "1 + 1 = #{1 + 1}"
 
@@ -97,20 +113,6 @@ rescue Exception => e
 end
 
 # ---------------------------------------------------------------- irb
-
-# CRuby names its encoding constants from the encoding database, which is
-# normally a dynamically loaded extension. kernel/enc.c declares the four
-# built-in encodings but cannot create the constants, so they are made here
-# from what is registered. Without them reline fails on Encoding::US_ASCII.
-Encoding.list.each do |encoding|
-  name = encoding.name.gsub("-", "_").gsub(".", "_")
-  next if Encoding.const_defined?(name, false)
-  begin
-    Encoding.const_set(name, encoding)
-  rescue NameError
-    # Names that are not valid constants; nothing looks those up by constant.
-  end
-end
 
 # The far end of the serial port is a real terminal, and the kernel now
 # implements enough of one -- termios, window size, a line discipline -- for
