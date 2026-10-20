@@ -175,6 +175,8 @@ a SHA cannot.
 | PicoRuby | `906e37f` |
 | musl | v1.2.5, patched |
 | irb / reline | 1.16.0 / 0.6.3, at the versions CRuby bundles |
+| lwIP | 2.2.1, the release picoruby-socket pins |
+| WEBrick | v1.9.2 |
 
 ## What it does not do
 
@@ -186,7 +188,11 @@ a SHA cannot.
   in stalls at the first prompt -- as it would for any program expecting a
   terminal.
 * Serial console only. No framebuffer, no UEFI, no keyboard.
-* One thread. `pthread_create` refuses rather than pretending.
+* One CPU. Threads are real -- `pthread_create` makes a kernel task, and a
+  thread that never makes a syscall is preempted after 10ms -- but only one
+  runs at a time.
+* No signal handlers ever run. `tkill` ends whatever the target thread is
+  waiting for with `EINTR`, which is all CRuby's timer thread wants from it.
 
 ## Prior work
 
