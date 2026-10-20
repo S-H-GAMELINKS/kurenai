@@ -12,7 +12,7 @@
 cmake_minimum_required(VERSION 3.25)
 project(cruby_cross LANGUAGES C ASM)
 
-foreach(v CRUBY_SRC CRUBY_HOST_BUILD)
+foreach(v CRUBY_SRC CRUBY_HOST_BUILD OPENSSL_SRC OPENSSL_BUILD)
   if(NOT ${v})
     message(FATAL_ERROR "cruby_build: -D${v}=... is required")
   endif()
@@ -127,6 +127,19 @@ set(JSON_SOURCES
   ${CRUBY_SRC}/ext/json/generator/generator.c)
 list(APPEND EXT_SOURCES ${JSON_SOURCES})
 
+# CRuby's binding to OpenSSL, for TLS. Every .c in ext/openssl is one
+# extension, openssl.so; extconf.rb compiles them all. The library itself is
+# built separately (the openssl stage at the top level) and linked into the
+# kernel, not into this archive.
+file(GLOB OPENSSL_EXT_SOURCES ${CRUBY_SRC}/ext/openssl/*.c)
+list(SORT OPENSSL_EXT_SOURCES)
+list(APPEND EXT_SOURCES ${OPENSSL_EXT_SOURCES})
+
+# digest, because ossl_digest.c requires it while openssl.so initialises:
+# OpenSSL::Digest is a subclass of Digest::Class. Only the framework; the
+# algorithms themselves are OpenSSL's.
+list(APPEND EXT_SOURCES ${CRUBY_SRC}/ext/digest/digest.c)
+
 add_library(ruby-static STATIC
   ${RUBY_SOURCES}
   ${PRISM_SOURCES}
@@ -173,6 +186,18 @@ set_source_files_properties(${JSON_SOURCES} PROPERTIES
   COMPILE_DEFINITIONS "HAVE_RB_ENC_INTERNED_STR=1;HAVE_RB_STR_TO_INTERNED_STR=1;HAVE_RB_HASH_NEW_CAPA=1;HAVE_RB_HASH_BULK_INSERT=1")
 set_property(SOURCE ${CRUBY_SRC}/ext/json/generator/generator.c APPEND PROPERTY
   COMPILE_DEFINITIONS JSON_GENERATOR)
+
+# A static build is what EXTSTATIC means upstream, and digest.h asks.
+set_source_files_properties(${CRUBY_SRC}/ext/digest/digest.c PROPERTIES
+  COMPILE_DEFINITIONS "EXTSTATIC=1")
+
+# ossl.h opens with #include RUBY_EXTCONF_H. OPENSSL_SUPPRESS_DEPRECATED is what
+# extconf.rb puts in $defs. OpenSSL's headers come from two places: the build
+# directory holds the ones Configure generates (configuration.h, opensslv.h,
+# ssl.h and others made from .in templates), and has to be searched first.
+set_source_files_properties(${OPENSSL_EXT_SOURCES} PROPERTIES
+  COMPILE_DEFINITIONS "RUBY_EXTCONF_H=\"openssl_extconf.h\";OPENSSL_SUPPRESS_DEPRECATED"
+  INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR};${OPENSSL_BUILD}/include;${OPENSSL_SRC}/include")
 
 # NOTE:
 # ext/socket cannot be given its extconf.h with -include, the way the three

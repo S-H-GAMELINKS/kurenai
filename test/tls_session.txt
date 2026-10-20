@@ -1,0 +1,5 @@
+require "openssl"; OpenSSL::Digest::SHA256.hexdigest("abc")
+File.write("/tmp/ca.pem", CA_PEM); :ca_written
+ctx = OpenSSL::SSL::SSLContext.new; ctx.verify_mode = OpenSSL::SSL::VERIFY_PEER; ctx.cert_store = OpenSSL::X509::Store.new.tap { |s| s.set_default_paths; s.add_file("/tmp/ca.pem") }; :context
+ssl = OpenSSL::SSL::SSLSocket.new(TCPSocket.new("10.0.2.2", 18443), ctx); ssl.connect; ssl.post_connection_check("10.0.2.2"); ssl.puts("over tls"); ssl.gets
+exit

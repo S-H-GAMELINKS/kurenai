@@ -23,6 +23,19 @@ set(CRUBY_REF    03b6d3f8898a28604fe6cb00eae3226b821168f4)  # v4.0.6
 set(LWIP_URL     https://github.com/lwip-tcpip/lwip.git)
 set(LWIP_REF     009c2256469004009488b3385ba269461e8eb616)  # STABLE-2_2_1_RELEASE
 
+# Set OpenSSL version
+# The 3.5 series is OpenSSL's long-term support line. 3.5.9 is the tag; its SHA
+# is the commit the annotated tag points at, not the tag object.
+set(OPENSSL_URL  https://github.com/openssl/openssl.git)
+set(OPENSSL_REF  45e844fa2a14ec92d146bd8f5778ac130b6625fb)  # openssl-3.5.9
+
+# Set CA certificate bundle version
+# Mozilla's trusted roots, as curl extracts them. Not a git repository, so it
+# is pinned by date and SHA-256 instead; the hash is the one curl.se publishes
+# beside the file.
+set(CACERT_URL    https://curl.se/ca/cacert-2026-09-25.pem)
+set(CACERT_SHA256 a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505)
+
 # Set termfront version
 # The terminal FPS run from irb -- written in Ruby, by this kernel's author, and
 # run unmodified: singleplayer, campaign and the TLS multiplayer client. v0.1.9

@@ -190,6 +190,94 @@ ExternalProject_Add(cruby
   STEP_TARGETS download patch configure build install
 )
 
+# ---------------------------------------------------------------- OpenSSL
+# libcrypto and libssl, cross-compiled against musl with the same flags as
+# everything else in the image, for CRuby's ext/openssl to link against.
+#
+# OpenSSL builds with its own Configure and make, so it is driven like musl
+# rather than given a CMakeLists. Out of tree, so the source stays as fetched.
+# Only the libraries are built: no apps, no tests, no docs.
+#
+# The options are what a kernel with no dynamic loader, no shared memory and no
+# ucontext can support, and each removes something that would otherwise be
+# reached for at run time:
+#
+#   no-shared no-pic no-dso no-module no-engine   one static image, no dlopen
+#   no-async          ASYNC jobs switch stacks with makecontext
+#   no-secure-memory  the secure heap wants mlock and guard pages
+#   no-afalgeng no-ktls  Linux kernel crypto and kernel TLS
+#   no-ui-console     reads passwords from /dev/tty
+#   no-asm            the C implementations; CR4.OSXSAVE is never set here,
+#                     so the AVX paths would not be taken anyway
+#
+# Threads stay on: pthreads are kernel tasks, and CRuby takes the GVL around
+# every call regardless. The seed source is the OS, which is getrandom, which is
+# RDSEED (kernel/random.c). OPENSSLDIR is /etc/ssl, so X509_STORE's default
+# paths find the CA bundle the kernel embeds at /etc/ssl/cert.pem.
+set(OPENSSL_BUILD_DIR ${CMAKE_BINARY_DIR}/openssl)
+set(OPENSSL_LIBS ${OPENSSL_BUILD_DIR}/libssl.a ${OPENSSL_BUILD_DIR}/libcrypto.a)
+
+execute_process(COMMAND ${CLANG_EXECUTABLE} -print-resource-dir
+                OUTPUT_VARIABLE CLANG_RESOURCE_DIR
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                COMMAND_ERROR_IS_FATAL ANY)
+
+# The same as BARE_METAL_FLAGS in cmake/toolchain-x86_64-bare-metal.cmake,
+# which this cannot include: it is a toolchain file, and OpenSSL is not a CMake
+# project.
+set(OPENSSL_CFLAGS
+    "-O2 -ffreestanding -fno-builtin -fno-stack-protector -fno-pic -m64 -nostdinc -isystem ${CLANG_RESOURCE_DIR}/include -isystem ${TP}/musl/install/include")
+
+find_program(PERL_EXECUTABLE perl REQUIRED)  # OpenSSL's Configure is Perl
+
+ExternalProject_Add(openssl
+  SOURCE_DIR ${TP}/openssl
+  BINARY_DIR ${OPENSSL_BUILD_DIR}
+  DEPENDS musl
+
+  DOWNLOAD_COMMAND ${CMAKE_COMMAND}
+      -DDIR=${TP}/openssl -DURL=${OPENSSL_URL} -DREF=${OPENSSL_REF}
+      -P ${DEPS_DIR}/fetch_sha.cmake
+
+  UPDATE_COMMAND ""
+  PATCH_COMMAND ""
+  CONFIGURE_COMMAND ${CMAKE_COMMAND} -E env
+      CC=${CLANG_EXECUTABLE} AR=${LLVM_AR_EXECUTABLE} RANLIB=${LLVM_RANLIB_EXECUTABLE}
+      ${PERL_EXECUTABLE} <SOURCE_DIR>/Configure linux-x86_64
+      no-shared no-pic no-dso no-module no-engine no-async no-secure-memory
+      no-afalgeng no-ktls no-ui-console no-comp no-asm
+      no-apps no-tests no-docs
+      --openssldir=/etc/ssl --with-rand-seed=os
+      "CFLAGS=${OPENSSL_CFLAGS}"
+  BUILD_COMMAND ${MAKE_EXECUTABLE} -j${NPROC} build_libs
+  INSTALL_COMMAND ""
+
+  BUILD_BYPRODUCTS ${OPENSSL_LIBS}
+
+  USES_TERMINAL_DOWNLOAD  ON
+  USES_TERMINAL_CONFIGURE ON
+  USES_TERMINAL_BUILD     ON
+  STEP_TARGETS download configure build
+)
+
+# ---------------------------------------------------------------- CA bundle
+# What OpenSSL checks a server's certificate chain against. Download only; the
+# kernel embeds it at /etc/ssl/cert.pem.
+set(CACERT_FILE ${TP}/cacert/cacert.pem)
+
+ExternalProject_Add(cacert
+  URL ${CACERT_URL}
+  URL_HASH SHA256=${CACERT_SHA256}
+  DOWNLOAD_DIR ${TP}/cacert
+  DOWNLOAD_NAME cacert.pem
+  DOWNLOAD_NO_EXTRACT TRUE
+  SOURCE_DIR ${TP}/cacert/source
+  CONFIGURE_COMMAND ""
+  BUILD_COMMAND ""
+  INSTALL_COMMAND ""
+  BUILD_BYPRODUCTS ${CACERT_FILE}
+)
+
 # ---------------------------------------------------------------- CRuby (cross)
 # NOTE:
 # This one is a child CMake project rather than a wrapped foreign build, so it
@@ -202,7 +290,7 @@ set(CRUBY_LIB       ${CRUBY_CROSS_DIR}/libruby-static.a)
 ExternalProject_Add(cruby_cross
   SOURCE_DIR ${CMAKE_SOURCE_DIR}/cruby_build
   BINARY_DIR ${CRUBY_CROSS_DIR}
-  DEPENDS cruby musl
+  DEPENDS cruby musl openssl
 
   DOWNLOAD_COMMAND ""
   UPDATE_COMMAND   ""
@@ -212,6 +300,8 @@ ExternalProject_Add(cruby_cross
     -DCMAKE_TOOLCHAIN_FILE=${CMAKE_SOURCE_DIR}/cmake/toolchain-x86_64-bare-metal.cmake
     -DMUSL_INSTALL=${TP}/musl/install
     -DCRUBY_SRC=${TP}/cruby
+    -DOPENSSL_SRC=${TP}/openssl
+    -DOPENSSL_BUILD=${OPENSSL_BUILD_DIR}
     -DGEMS_DIR=${GEMS_DIR}
     -DCRUBY_HOST_BUILD=${CRUBY_HOST_DIR}
     -DCMAKE_BUILD_TYPE=Release
@@ -383,7 +473,7 @@ set(KERNEL64_ELF ${KERNEL_DIR}/kernel64.elf)
 ExternalProject_Add(kernel
   SOURCE_DIR ${CMAKE_SOURCE_DIR}/kernel
   BINARY_DIR ${KERNEL_DIR}
-  DEPENDS musl picoruby cruby_cross gems lwip termfront
+  DEPENDS musl picoruby cruby_cross gems lwip termfront cacert
 
   DOWNLOAD_COMMAND ""
   UPDATE_COMMAND   ""
@@ -411,6 +501,8 @@ ExternalProject_Add(kernel
     -DPICORUBY_SRC=${TP}/picoruby
     -DGEMS_DIR=${GEMS_DIR}
     -DTERMFRONT_SRC=${TP}/termfront
+    -DCACERT_FILE=${CACERT_FILE}
+    -DOPENSSL_BUILD=${OPENSSL_BUILD_DIR}
     -DCMAKE_BUILD_TYPE=Release
 
   BUILD_BYPRODUCTS ${KERNEL_ELF} ${KERNEL64_ELF}
@@ -518,6 +610,7 @@ add_files_exist_test(verify_build_cruby_cross ${CRUBY_LIB})
 add_test(NAME verify_cruby_cross COMMAND ${CMAKE_COMMAND}
          -DARCHIVE=${CRUBY_LIB}
          -DLIBC=${TP}/musl/install/lib/libc.a
+         "-DLIBRARIES=${OPENSSL_BUILD_DIR}/libssl.a|${OPENSSL_BUILD_DIR}/libcrypto.a"
          -DLLVM_NM=${LLVM_NM_EXECUTABLE}
          -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/cruby_cross.cmake)
 
@@ -734,6 +827,26 @@ if(QEMU_EXECUTABLE)
            -DSECONDS=60
            -DUNTIL=irb.finished
            "-DEXPECT==> .echo: hello[\\]n.|=> Errno::ECONNREFUSED|irb finished"
+           -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/irb_session.cmake)
+
+  # TLS, end to end: OpenSSL in the kernel, through the socket layer above, to
+  # a server test/tls_driver.rb runs on this side with a certificate for
+  # 10.0.2.2 from a CA it made a moment ago. The kernel trusts that CA from a
+  # file written at run time, verifies the chain and the address in the
+  # certificate, and a line goes out and comes back encrypted. The digest line
+  # is a known answer, SHA-256 of "abc", which says libcrypto itself computes
+  # correctly in this image.
+  add_test(NAME verify_tls_connection COMMAND ${CMAKE_COMMAND}
+           -DRUBY=${RUBY_EXECUTABLE}
+           -DDRIVER=${CMAKE_SOURCE_DIR}/test/tls_driver.rb
+           "-DDRIVER_ARGS=--tls-port;18443"
+           -DQEMU=${QEMU_EXECUTABLE}
+           -DKERNEL=${KERNEL_ELF}
+           -DINPUT=${CMAKE_SOURCE_DIR}/test/tls_session.txt
+           -DLOG=${CMAKE_CURRENT_BINARY_DIR}/tls_session.log
+           -DSECONDS=90
+           -DUNTIL=irb.finished
+           "-DEXPECT==> .ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad.|=> :ca_written|=> .echo: over tls[\\]n.|irb finished"
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/irb_session.cmake)
 endif()
 

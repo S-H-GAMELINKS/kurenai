@@ -19,7 +19,8 @@ cmake_minimum_required(VERSION 3.25)
 project(picoruby_kernel LANGUAGES C ASM)
 
 foreach(v BOOT_DIR RUBY_DIR PICORBC PICORUBY_LIB PICORUBY_INCLUDE_DIRS MUSL_INSTALL
-          CRUBY_LIB CRUBY_SRC PICORUBY_SRC LWIP_SRC GEMS_DIR TERMFRONT_SRC EMBED_SCRIPT EMBED_FILES)
+          CRUBY_LIB CRUBY_SRC PICORUBY_SRC LWIP_SRC GEMS_DIR TERMFRONT_SRC
+          OPENSSL_BUILD CACERT_FILE EMBED_SCRIPT EMBED_FILES)
   if(NOT ${v})
     message(FATAL_ERROR "kernel: -D${v}=... is required")
   endif()
@@ -152,6 +153,17 @@ embed_ruby_under(${GEMS_DIR}/reline/lib)
 # enough: require "date" is /date.rb requiring date_core.so rather than the
 # other way round.
 embed_all_ruby_under(${CRUBY_SRC}/ext/date/lib)
+
+# openssl's Ruby half: /openssl.rb requires openssl.so, then the parts of the
+# API written in Ruby -- SSLSocket#connect's wait loop and the hostname check
+# among them. It requires digest as it loads, whose Ruby half is /digest.rb.
+embed_all_ruby_under(${CRUBY_SRC}/ext/openssl/lib)
+embed_all_ruby_under(${CRUBY_SRC}/ext/digest/lib)
+
+# The CA bundle, where OpenSSL looks by default: OPENSSLDIR is /etc/ssl, so
+# X509_STORE#set_default_paths reads /etc/ssl/cert.pem.
+list(APPEND EMBEDDED_ENTRIES "/etc/ssl/cert.pem=${CACERT_FILE}")
+list(APPEND EMBEDDED_SOURCES "${CACERT_FILE}")
 
 # json's Ruby half: json.rb, json/common.rb and json/ext.rb, which requires the
 # two C halves by name.
@@ -355,8 +367,11 @@ if(NOT EXISTS ${COMPILER_RT_BUILTINS})
   message(FATAL_ERROR "compiler-rt builtins not found at ${COMPILER_RT_BUILTINS}")
 endif()
 
+# libssl and libcrypto for ext/openssl, which is in the CRuby archive.
 target_link_libraries(kernel64.elf PRIVATE
   ${CRUBY_LIB}
+  ${OPENSSL_BUILD}/libssl.a
+  ${OPENSSL_BUILD}/libcrypto.a
   ${PICORUBY_LIB}
   ${MUSL_INSTALL}/lib/libc.a
   ${COMPILER_RT_BUILTINS})

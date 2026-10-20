@@ -25,7 +25,12 @@
  * and /date.rb is what requires date_core.so, not the other way round.
  *
  * json is two extensions, json/ext/parser and json/ext/generator, required by
- * those names from json/ext.rb. */
+ * those names from json/ext.rb.
+ *
+ * openssl is the same shape as socket and date: require "openssl" loads
+ * /openssl.rb, which requires openssl.so and then defines the half of the API
+ * written in Ruby -- OpenSSL::SSL::SSLSocket#connect among it. It requires
+ * "digest" while it initialises, which is /digest.rb requiring digest.so. */
 
 void ruby_init_ext(const char *name, void (*init)(void));
 
@@ -38,6 +43,8 @@ void Init_socket(void);
 void Init_date_core(void);
 void Init_parser(void);
 void Init_generator(void);
+void Init_digest(void);
+void Init_openssl(void);
 
 void
 Init_ext(void)
@@ -51,4 +58,6 @@ Init_ext(void)
     ruby_init_ext("date_core.so", Init_date_core);
     ruby_init_ext("json/ext/parser.so", Init_parser);
     ruby_init_ext("json/ext/generator.so", Init_generator);
+    ruby_init_ext("digest.so", Init_digest);
+    ruby_init_ext("openssl.so", Init_openssl);
 }
