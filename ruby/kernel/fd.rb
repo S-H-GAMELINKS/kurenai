@@ -23,6 +23,15 @@ module Kernel
     # rooted for the life of the VM.
     TABLE = {}
 
+    # O_NONBLOCK for the three console descriptors, which have no entry.
+    CONSOLE_NONBLOCK = { CONSOLE_IN => false, CONSOLE_OUT => false, CONSOLE_ERR => false }
+
+    O_WRONLY   = 0o1
+    O_RDWR     = 0o2
+    O_APPEND   = 0o2000
+    O_NONBLOCK = 0o4000
+    O_DIRECTORY = 0o200000
+
     def self.open_file(path, node, readable, writable, append)
       number = next_number
       return nil unless number
@@ -135,6 +144,42 @@ module Kernel
 
     def self.console?(number)
       number >= CONSOLE_IN && number <= CONSOLE_ERR
+    end
+
+    def self.nonblocking?(number)
+      return CONSOLE_NONBLOCK[number] if console?(number)
+
+      entry = TABLE[number]
+      !entry.nil? && entry[:nonblock] == true
+    end
+
+    # What F_GETFL reports.
+    def self.status_flags(number)
+      flags = nonblocking?(number) ? O_NONBLOCK : 0
+      return flags | O_RDWR if console?(number)
+
+      entry = TABLE[number]
+      return flags | O_DIRECTORY if entry[:directory]
+      return flags | O_RDWR unless entry[:node]
+
+      flags |= O_APPEND if entry[:append]
+      if entry[:readable] && entry[:writable] then flags | O_RDWR
+      elsif entry[:writable] then flags | O_WRONLY
+      else flags
+      end
+    end
+
+    # F_SETFL: O_NONBLOCK and O_APPEND are the flags it may change.
+    def self.set_status_flags(number, flags)
+      nonblock = (flags & O_NONBLOCK) != 0
+      if console?(number)
+        CONSOLE_NONBLOCK[number] = nonblock
+        return
+      end
+
+      entry = TABLE[number]
+      entry[:nonblock] = nonblock
+      entry[:append] = (flags & O_APPEND) != 0 if entry[:node]
     end
 
     # Copies from the file into the caller's buffer and advances the offset.
