@@ -834,6 +834,10 @@ if(QEMU_EXECUTABLE)
   # screen, draws its title and demo through io/console from its writer
   # thread, and reads the "q" that quits it with IO.select and read_nonblock.
   # Then irb has the terminal back, cooked again, and answers the next line.
+  #
+  # The session has blank lines after the "q". The driver sends a line every
+  # 0.4 seconds whatever is listening, and termfront reads its keys 64 bytes at
+  # a time, so whatever arrives with the "q" goes with it.
   add_test(NAME verify_termfront COMMAND ${CMAKE_COMMAND}
            -DRUBY=${RUBY_EXECUTABLE}
            -DDRIVER=${CMAKE_SOURCE_DIR}/test/terminal_driver.rb

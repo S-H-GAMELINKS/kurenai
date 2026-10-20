@@ -195,6 +195,41 @@ rescue Exception => e
   puts e.backtrace.first(8).join("\n") if e.backtrace
 end
 
+# ---------------------------------------------------------------- window size
+
+# Asks the terminal how large it is, the way xterm's resize(1) does, and tells
+# the kernel. A serial port carries bytes and nothing else, so TIOCGWINSZ can
+# only answer what it was last told, which is 80x24 until this runs. The
+# question is the cursor's: move it as far right and down as it will go, ask
+# where it ended up, and put it back.
+#
+# Anything implausibly small is ignored rather than believed -- the terminal
+# test/terminal_driver.rb stands in for answers every query with 1;1 -- and no
+# answer within half a second, from a pipe or a terminal that does not speak
+# VT100, leaves the size as it was. Returns [rows, columns] either way.
+def resize
+  reply = +""
+  STDIN.raw do |stdin|
+    STDOUT.write("\e7\e[999;999H\e[6n\e8")
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 0.5
+    until reply.include?("R")
+      left = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      break if left <= 0 || !IO.select([stdin], nil, nil, left)
+
+      # A byte at a time, so that whatever was typed after the answer is left
+      # for whoever reads next.
+      chunk = stdin.read_nonblock(1, exception: false)
+      reply << chunk if chunk.is_a?(String)
+    end
+  end
+
+  if (m = reply.match(/\e\[(\d+);(\d+)R/))
+    rows, columns = m[1].to_i, m[2].to_i
+    STDOUT.winsize = [rows, columns] if rows >= 10 && columns >= 20
+  end
+  STDOUT.winsize
+end
+
 # ---------------------------------------------------------------- termfront
 
 # A terminal FPS, run from irb by typing its name. It is termfront as
@@ -203,9 +238,13 @@ end
 # read_nonblock, and writing frames from a thread of its own. Quitting from its
 # title screen comes back here.
 #
+# The window is measured first. termfront draws to whatever size TIOCGWINSZ
+# reports, and the terminal may have been resized since boot.
+#
 # Defined at the top level, so it is a private method of Object and irb's main
 # can call it without a receiver.
 def termfront
+  resize
   require "termfront"
   Termfront.start
 end
@@ -228,6 +267,11 @@ begin
   # configuration from its defaults -- so anything set before it is discarded,
   # which is why history saving kept running after being switched off. Doing
   # the two halves separately leaves somewhere to put the settings.
+  # The window, before Reline draws anything: it wraps lines at the width
+  # TIOCGWINSZ reports.
+  rows, columns = resize
+  puts "terminal: #{rows}x#{columns}"
+
   IRB.setup(nil)
 
   # No pager to page into, and no writable filesystem to save history on.

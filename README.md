@@ -74,14 +74,14 @@ The first build takes a few minutes once the sources are fetched, and `third_par
 with OpenSSL's tree the largest part of it. Afterwards the kernel is
 `build/dev/kernel/kernel.elf`, 11MB.
 
-Type Ruby at the `irb(main):001>` prompt, or `termfront` to play. The window is
-80x24 unless told otherwise, because a serial port cannot ask; for a larger
-terminal, say so first:
+Type Ruby at the `irb(main):001>` prompt, or `termfront` to play. A serial
+port cannot report the window size, so the terminal is asked instead, the way
+xterm's `resize` does it: at boot, and again each time termfront starts. After
+resizing the window from irb, `resize` measures it again.
 
-```ruby
-STDOUT.winsize = [40, 120]
-termfront
-```
+termfront slows down as the window grows, because drawing it is CPU work and
+QEMU emulates the CPU unless it can use KVM. At 80x24 it holds about 55 frames
+a second under emulation.
 
 **Ctrl-A X quits QEMU** -- Ctrl-C is passed through to the guest, and `exit`
 leaves irb but the kernel then halts rather than powering off.
@@ -228,8 +228,8 @@ a SHA cannot.
 
 * Nothing persists. The filesystem can be written, but it lives in memory and
   is gone at the next boot, so irb's history is not saved.
-* The window size is 80x24 until `STDOUT.winsize=` says otherwise. A serial
-  port has no way to ask the other end how large it is.
+* No SIGWINCH. The window is measured when asked -- at boot, by `termfront`,
+  or by `resize` -- and resizing the terminal in between goes unnoticed.
 * No sound. termfront plays nothing: there is no sound card, and no player to
   hand its files to.
 * No IPv6. Asking for an IPv6 socket is refused with the errno that makes
