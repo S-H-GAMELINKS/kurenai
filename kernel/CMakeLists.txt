@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 3.25)
 project(picoruby_kernel LANGUAGES C ASM)
 
 foreach(v BOOT_DIR RUBY_DIR PICORBC PICORUBY_LIB PICORUBY_INCLUDE_DIRS MUSL_INSTALL
-          CRUBY_LIB CRUBY_SRC PICORUBY_SRC LWIP_SRC GEMS_DIR WEBRICK_SRC EMBED_SCRIPT EMBED_FILES)
+          CRUBY_LIB CRUBY_SRC PICORUBY_SRC LWIP_SRC GEMS_DIR WEBRICK_SRC MUI_SRC EMBED_SCRIPT EMBED_FILES)
   if(NOT ${v})
     message(FATAL_ERROR "kernel: -D${v}=... is required")
   endif()
@@ -88,7 +88,7 @@ function(embed_under root)
   set(EMBEDDED_SOURCES "${EMBEDDED_SOURCES}" PARENT_SCOPE)
 endfunction()
 
-embed_under(${RUBY_DIR}/files hello.rb rbconfig.rb)
+embed_under(${RUBY_DIR}/files hello.rb rbconfig.rb www/index.html)
 
 # Ripper's Ruby half. The C half is already linked in and registered as
 # ripper.so, which is what ripper/core.rb requires.
@@ -148,8 +148,13 @@ embed_ruby_under(${GEMS_DIR}/reline/lib)
 # require "date" is /date.rb requiring date_core.so rather than the other way
 # round.
 embed_all_ruby_under(${WEBRICK_SRC}/lib)
+
+# mui, the editor irb opens the pages in. Its lib/ is all Ruby; the curses
+# adapter comes along but is never loaded, because the ANSI one is used.
+embed_all_ruby_under(${MUI_SRC}/lib)
 embed_all_ruby_under(${CRUBY_SRC}/ext/date/lib)
 embed_all_ruby_under(${CRUBY_SRC}/ext/digest/lib)
+embed_all_ruby_under(${CRUBY_SRC}/ext/strscan/lib)
 
 embed_ruby_under(${CRUBY_SRC}/lib EXCLUDE
   "^bundler"      # a package manager, with no packages and no network
@@ -161,8 +166,7 @@ embed_ruby_under(${CRUBY_SRC}/lib EXCLUDE
   "^mkmf"         # builds extensions; there is no compiler here
   "^un\\.rb"
   "^ipaddr"
-  "^find\\.rb"
-  "^open3")
+  "^find\\.rb")
 
 set(EMBEDDED_MANIFEST ${CMAKE_CURRENT_BINARY_DIR}/embedded_manifest.txt)
 string(REPLACE ";" "\n" EMBEDDED_MANIFEST_TEXT "${EMBEDDED_ENTRIES}")

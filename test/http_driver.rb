@@ -7,8 +7,8 @@
 #
 #   ruby http_driver.rb --qemu QEMU --kernel ELF --log FILE --port N
 #                       [--ready PATTERN] [--requests N] [--expect TEXT]
-#                       [--server TEXT] [--idle N] [--seconds N]
-#                       [--until PATTERN]
+#                       [--server TEXT] [--idle N] [--path PATH]
+#                       [--seconds N] [--until PATTERN]
 
 require "optparse"
 require "net/http"
@@ -31,6 +31,10 @@ OptionParser.new do |o|
   # gives up on it -- thirty seconds, for WEBrick -- so the requests are only
   # answered in time if something else is free to answer them.
   o.on("--idle N")        { |v| options[:idle] = v.to_i }
+  # What to ask for. By default each request names its own path, which a
+  # server that answers everything with one page is happy with; one that
+  # serves files needs a path that exists.
+  o.on("--path PATH")     { |v| options[:path] = v }
   # What the kernel prints when it is ready to be asked. An option rather than
   # a constant because it is a promise between two files, and the last time it
   # was written into this one, changing the wording in the other made the test
@@ -100,7 +104,7 @@ IO.popen(qemu_command, "r+") do |qemu|
       if listening && asked < options[:requests]
         asked += 1
         begin
-          responses << request(options[:port], "/request-#{asked}")
+          responses << request(options[:port], options[:path] || "/request-#{asked}")
         rescue => e
           failures << "request #{asked}: #{e.class}: #{e.message}"
         end

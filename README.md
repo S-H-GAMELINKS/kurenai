@@ -62,8 +62,13 @@ Type Ruby at the `irb(main):001>` prompt. **Ctrl-A X quits QEMU** -- Ctrl-C is
 passed through to the guest, and `exit` leaves irb but the kernel then halts
 rather than powering off.
 
+WEBrick is serving `/www` behind irb the whole time, on port 3000 of the host:
+open <http://localhost:3000/> in a browser. To change the page, type `mui` at
+the prompt -- that opens `/www/index.html` in [mui][mui], a Vim-like editor
+written in Ruby -- edit, `:wq`, and reload.
+
 ```sh
-ctest --preset dev                        # 16 checks, including a live irb session
+ctest --preset dev                        # 22 checks, including live irb and mui sessions
 ```
 
 ### What you need
@@ -177,11 +182,13 @@ a SHA cannot.
 | irb / reline | 1.16.0 / 0.6.3, at the versions CRuby bundles |
 | lwIP | 2.2.1, the release picoruby-socket pins |
 | WEBrick | v1.9.2 |
+| mui | `8d42912`, with its ANSI terminal adapter |
 
 ## What it does not do
 
-* No writable filesystem. The 215 files it serves are compiled into the image,
-  and irb's history is not saved.
+* Nothing persists. Files can be written, but into memory: the image's files
+  are copied when first written, and everything is gone at the next boot.
+  irb's history is not saved for that reason.
 * The window size is 80x24. A serial port has no way to ask the other end how
   large it is.
 * `\e[6n` is answered by whatever terminal is at the far end, so piping input
@@ -203,3 +210,4 @@ filesystem and the terminal are Ruby, and every stage is verified -- but the
 route was mapped by those.
 
 [robm]: https://github.com/S-H-GAMELINKS/ruby-on-bare-metal
+[mui]: https://github.com/S-H-GAMELINKS/mui

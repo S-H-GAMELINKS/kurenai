@@ -24,7 +24,10 @@
  * date_core, digest, digest/md5, digest/sha1 and etc exist for WEBrick, which
  * requires all of them while loading whether or not a request ever uses them.
  * digest is the same shape as socket: the Ruby half, /digest.rb, is what
- * defines Digest(), and md5init.c requires "digest" to get it. */
+ * defines Digest(), and md5init.c requires "digest" to get it.
+ *
+ * strscan exists for mui, the editor, and its Ruby half -- strscan/strscan.rb,
+ * which Init_strscan requires -- is embedded alongside. */
 
 void ruby_init_ext(const char *name, void (*init)(void));
 
@@ -39,6 +42,7 @@ void Init_digest(void);
 void Init_md5(void);
 void Init_sha1(void);
 void Init_etc(void);
+void Init_strscan(void);
 
 void
 Init_ext(void)
@@ -54,4 +58,5 @@ Init_ext(void)
     ruby_init_ext("digest/md5.so", Init_md5);
     ruby_init_ext("digest/sha1.so", Init_sha1);
     ruby_init_ext("etc.so", Init_etc);
+    ruby_init_ext("strscan.so", Init_strscan);
 }

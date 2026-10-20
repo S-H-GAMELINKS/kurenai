@@ -128,6 +128,9 @@ set(WEBRICK_EXT_SOURCES
   ${CRUBY_SRC}/ext/etc/etc.c)
 list(APPEND EXT_SOURCES ${WEBRICK_EXT_SOURCES})
 
+# For mui, which parses key notation with StringScanner.
+list(APPEND EXT_SOURCES ${CRUBY_SRC}/ext/strscan/strscan.c)
+
 add_library(ruby-static STATIC
   ${RUBY_SOURCES}
   ${PRISM_SOURCES}
@@ -154,6 +157,9 @@ set_source_files_properties(${CRUBY_SRC}/ext/stringio/stringio.c PROPERTIES
   COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/stringio_extconf.h")
 set_source_files_properties(${CRUBY_SRC}/ext/io/nonblock/nonblock.c PROPERTIES
   COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/io_nonblock_extconf.h")
+set_source_files_properties(${CRUBY_SRC}/ext/strscan/strscan.c PROPERTIES
+  COMPILE_DEFINITIONS "RUBY_EXTCONF_H=\"strscan_extconf.h\""
+  INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}")
 set_source_files_properties(${CRUBY_SRC}/ext/etc/etc.c PROPERTIES
   COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/etc_extconf.h"
   INCLUDE_DIRECTORIES "${CRUBY_SRC}/ext/etc")

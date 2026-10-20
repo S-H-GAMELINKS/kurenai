@@ -1,0 +1,10 @@
+mui "/www/index.html"
+#wait -- NORMAL --
+G
+o<p>edited from mui</p>
+
+#wait \[\+\]
+:wq
+#wait irb\(main\):002
+File.read("/www/index.html").include?("edited from mui")
+exit

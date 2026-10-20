@@ -11,6 +11,12 @@
 #
 #   ruby terminal_driver.rb --qemu QEMU --kernel ELF --log FILE
 #                           --input FILE [--seconds N] [--until PATTERN]
+#
+# Input is sent a line at a time once irb's first prompt appears. A line of
+# the form "#wait PATTERN" is not sent: it holds the next line back until
+# PATTERN appears in what the kernel prints after it. That is how a session
+# waits for a program it started -- an editor drawing its screen -- instead of
+# typing into whatever happens to be reading.
 
 require "optparse"
 
@@ -58,6 +64,8 @@ IO.popen([options[:qemu],
   sent = 0
   prompt_seen = false
   woken = options[:wake].nil?
+  waiting_for = nil     # a #wait pattern, and where in the transcript it began
+  waiting_from = 0
 
   begin
     while Time.now < deadline
@@ -94,7 +102,16 @@ IO.popen([options[:qemu],
       # Feed the script once irb is up, one line at a time so each is read as
       # its own line rather than arriving as one burst.
       prompt_seen ||= transcript.include?("irb(main):001")
-      if prompt_seen && sent < script.length && (queries == answered)
+      if waiting_for && transcript[waiting_from..].match?(waiting_for)
+        waiting_for = nil
+      end
+      if prompt_seen && waiting_for.nil? && sent < script.length &&
+         script[sent].start_with?("#wait ")
+        waiting_for = Regexp.new(script[sent].chomp.delete_prefix("#wait "))
+        waiting_from = transcript.length
+        sent += 1
+      end
+      if prompt_seen && waiting_for.nil? && sent < script.length && (queries == answered)
         qemu.write(script[sent])
         qemu.flush
         sent += 1

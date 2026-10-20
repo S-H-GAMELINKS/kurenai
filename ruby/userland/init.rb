@@ -27,6 +27,13 @@ Encoding.list.each do |encoding|
   end
 end
 
+# The ruby command sets this from the locale while it processes its options,
+# which never happens here: CRuby is started directly. Left unset, files read
+# as ASCII-8BIT, and the "filesystem" encoding -- an alias CRuby only registers
+# when this is assigned -- does not exist, which WEBrick's FileHandler asks for
+# by name on every request. Everything here is UTF-8, so say so.
+Encoding.default_external = Encoding::UTF_8
+
 puts "cruby #{RUBY_VERSION} on picoruby-kernel"
 puts "1 + 1 = #{1 + 1}"
 
@@ -160,46 +167,44 @@ begin
   # non-blocking accept, and a thread per connection. Nothing in it is patched;
   # the threads are kernel tasks.
   #
-  # It serves until somebody types something. A time limit was tried first and
-  # was wrong: it made a server that could only be reached by a program fast
-  # enough to catch the window, which is to say not by hand -- and a web server
-  # nobody can visit is not one. But a blocking accept with no way out would
-  # mean irb was only reachable on a machine with no network, so a thread
-  # watches the console and a keystroke on it shuts the server down -- which is
-  # how WEBrick expects to be stopped, from another thread, through its
-  # shutdown pipe.
+  # It serves /www, which starts as the page compiled into the image and is
+  # an ordinary writable directory from then on: open it in mui from irb,
+  # save, and the next request gets the new page. So the server runs in a
+  # thread of its own for as long as the machine does, irb comes up in front
+  # of it, and its log goes to a file rather than across irb's screen.
   require "webrick"
+
+  Dir.mkdir("/var")
+  Dir.mkdir("/var/log")
+  log = File.open("/var/log/webrick.log", "a")
+  log.sync = true
 
   # There is no resolver, so a reverse lookup of every peer would only be a
   # wait for an answer that cannot come.
-  server = WEBrick::HTTPServer.new(BindAddress: "0.0.0.0", Port: 80,
-                                   DoNotReverseLookup: true)
-  server.mount_proc("/") do |_request, response|
-    response.content_type = "text/plain"
-    response.body = "hello from a Ruby kernel\n"
-  end
+  server = WEBrick::HTTPServer.new(
+    BindAddress: "0.0.0.0", Port: 80, DocumentRoot: "/www",
+    DoNotReverseLookup: true,
+    Logger: WEBrick::Log.new(log),
+    AccessLog: [[log, WEBrick::AccessLog::COMMON_LOG_FORMAT]]
+  )
 
-  # Printed from inside start rather than before it, because that is when the
-  # select is about to run; the tests knock as soon as they see this line.
+  # Printed from inside start, as the select is about to run -- the tests knock
+  # as soon as they see this line -- and waited for here, so the line comes
+  # before irb's rather than somewhere in the middle of it.
+  serving = Queue.new
   server.config[:StartCallback] = proc do
     address = server.listeners.first.local_address
-    puts "http: serving on #{address.ip_address}:#{address.ip_port}, " \
-         "press Enter for irb"
+    puts "http: serving /www on #{address.ip_address}:#{address.ip_port}, " \
+         "log in /var/log/webrick.log"
+    serving << true
   end
-
-  console = Thread.new do
-    STDIN.wait_readable
-    # Take the keystroke, so Reline does not find it waiting for it.
-    begin
-      STDIN.read_nonblock(64)
-    rescue IO::WaitReadable, EOFError
-    end
-    server.shutdown
+  Thread.new do
+    server.start
+  rescue Exception => e
+    puts "http failed: #{e.class}: #{e.message}"
+    serving << false
   end
-
-  server.start
-  console.join
-  puts "http: stopped"
+  serving.pop
 rescue Exception => e
   puts "socket failed: #{e.class}: #{e.message}"
   puts e.backtrace.first(8).join("\n") if e.backtrace
@@ -215,6 +220,15 @@ ENV["TERM"] = "vt100"
 # There is one directory and no user database. Reline expands ~/.inputrc, and
 # without HOME set CRuby falls back to looking the user up by uid and fails.
 ENV["HOME"] = "/"
+# The editor. mui draws with escape sequences through its ANSI adapter --
+# there is no curses here -- and reads keys from the same console Reline does,
+# so irb hands the terminal over for as long as it runs and gets it back after.
+def mui(path = "/www/index.html")
+  require "mui"
+  Mui::Editor.new(path, adapter: Mui::TerminalAdapter::Ansi.new).run
+  nil
+end
+
 begin
   require "irb"
   puts "irb #{IRB::VERSION} loaded"
@@ -225,7 +239,8 @@ begin
   # the two halves separately leaves somewhere to put the settings.
   IRB.setup(nil)
 
-  # No pager to page into, and no writable filesystem to save history on.
+  # No pager to page into. History is not saved: the filesystem is written to
+  # memory and goes when the machine does.
   IRB.conf[:USE_PAGER] = false
   IRB.conf[:SAVE_HISTORY] = false
 

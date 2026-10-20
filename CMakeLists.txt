@@ -375,6 +375,29 @@ ExternalProject_Add(webrick
   STEP_TARGETS download
 )
 
+# ---------------------------------------------------------------- mui
+# Download only, like WEBrick. MUI_SOURCE_URL is where it is fetched from, the
+# GitHub repository unless set: pointing it at a local clone builds against a
+# commit that has not been pushed yet. The SHA is pinned either way.
+set(MUI_SOURCE_URL ${MUI_URL} CACHE STRING "Where to fetch mui from")
+
+ExternalProject_Add(mui
+  SOURCE_DIR ${TP}/mui
+
+  DOWNLOAD_COMMAND ${CMAKE_COMMAND}
+      -DDIR=${TP}/mui -DURL=${MUI_SOURCE_URL} -DREF=${MUI_REF}
+      -P ${DEPS_DIR}/fetch_sha.cmake
+
+  UPDATE_COMMAND    ""
+  PATCH_COMMAND     ""
+  CONFIGURE_COMMAND ""
+  BUILD_COMMAND     ""
+  INSTALL_COMMAND   ""
+
+  USES_TERMINAL_DOWNLOAD ON
+  STEP_TARGETS download
+)
+
 # ---------------------------------------------------------------- kernel
 set(KERNEL_DIR   ${CMAKE_BINARY_DIR}/kernel)
 set(KERNEL_ELF   ${KERNEL_DIR}/kernel.elf)
@@ -383,7 +406,7 @@ set(KERNEL64_ELF ${KERNEL_DIR}/kernel64.elf)
 ExternalProject_Add(kernel
   SOURCE_DIR ${CMAKE_SOURCE_DIR}/kernel
   BINARY_DIR ${KERNEL_DIR}
-  DEPENDS musl picoruby cruby_cross gems lwip webrick
+  DEPENDS musl picoruby cruby_cross gems lwip webrick mui
 
   DOWNLOAD_COMMAND ""
   UPDATE_COMMAND   ""
@@ -411,6 +434,7 @@ ExternalProject_Add(kernel
     -DPICORUBY_SRC=${TP}/picoruby
     -DGEMS_DIR=${GEMS_DIR}
     -DWEBRICK_SRC=${TP}/webrick
+    -DMUI_SRC=${TP}/mui
     -DCMAKE_BUILD_TYPE=Release
 
   BUILD_BYPRODUCTS ${KERNEL_ELF} ${KERNEL64_ELF}
@@ -630,22 +654,21 @@ if(QEMU_EXECUTABLE)
            # does not cover is a connection actually arriving, which is what
            # CRuby's own TCPServer will be asked to do next.
            #
-           # The WEBrick lines say require "webrick" got through everything it
-           # loads -- time and so date_core, uri, erb, digest, etc -- and that
-           # a server was made, which means its listener was: CRuby's own
+           # The http line says require "webrick" got through everything it
+           # loads -- time and so date_core, uri, erb, digest, etc -- that a
+           # server was made, which means its listener was: CRuby's own
            # TCPServer, a descriptor, a bind and a listen, all serviced by the
-           # Ruby kernel. The http line is printed from WEBrick's start
-           # callback, as its select is about to run. It is the last line this
-           # check looks for, because the kernel stays there -- it is a web
-           # server, and irb is behind a keystroke. Which is what verify_irb
-           # sends.
+           # Ruby kernel -- and that its thread reached the select, because the
+           # line is printed from WEBrick's start callback. WEBrick's own log
+           # goes to /var/log/webrick.log, a file written at run time, so as not
+           # to scroll across irb, which comes up in front of it.
            #
            # The socket lines say three separate things: the constant tables
            # mkconstants.rb generated survived the cross compile, uname(2)
            # answers so the server can name itself, musl resolves a numeric
            # address with no resolver behind it, and socket.rb was found in the
            # Ruby filesystem -- Addrinfo is defined there, not in the C half.
-           "-DEXPECT=boot ok|traps ok|irq: timer 1000 Hz, [1-9][0-9]* ticks in 20 ms|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|threads: 4 joined [[]1, 2, 3, 4[]]|threads: 200 started and finished|queue: 100 items|mutex: 1000|preempt: a spinning thread gave way|timeout: Timeout::Error|fs: 2 lines, 36 bytes|fs: required a file written at run time, ANSWER = 42|fs: mtime moved true|fs: /tmp holds [[]".", "..", "renamed.txt"[]]|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|INFO  WEBrick 1[.]9[.]2|WEBrick::HTTPServer#start: pid=1 port=80|http: serving on 0[.]0[.]0[.]0:80"
+           "-DEXPECT=boot ok|traps ok|irq: timer 1000 Hz, [1-9][0-9]* ticks in 20 ms|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|threads: 4 joined [[]1, 2, 3, 4[]]|threads: 200 started and finished|queue: 100 items|mutex: 1000|preempt: a spinning thread gave way|timeout: Timeout::Error|fs: 2 lines, 36 bytes|fs: required a file written at run time, ANSWER = 42|fs: mtime moved true|fs: /tmp holds [[].[.]., .[.][.]., .renamed[.]txt.[]]|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|http: serving /www on 0[.]0[.]0[.]0:80, log in /var/log/webrick.log"
            # Nothing may reach rb_bug: CRuby's answer to an impossible libc
            # result is to abort, and it has no way to say so on this machine.
            # ThreadError likewise: threads are real now, and failing to make one
@@ -653,7 +676,7 @@ if(QEMU_EXECUTABLE)
            # names what the kernel was asked for and did not do -- futex was
            # the first of those threads would hit -- and a futex wait inside a
            # dispatch is the one wait that could never be woken.
-           "-DEXPECT_NONE=\\[BUG\\]|rb_bug|ThreadError|threads failed|fs failed|unhandled syscall|futex wait inside a dispatch|lwip: assertion failed|frames dropped"
+           "-DEXPECT_NONE=\\[BUG\\]|rb_bug|ThreadError|threads failed|fs failed|http failed|socket failed|unhandled syscall|futex wait inside a dispatch|lwip: assertion failed|frames dropped"
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial.log
            # The kernel halts instead of exiting, so QEMU always runs for the
            # full timeout. Booting takes well under a second here; the margin
@@ -705,6 +728,9 @@ if(QEMU_EXECUTABLE)
            # What ruby/userland/init.rb prints when the listener is open. The
            # forward is refused until then, so knocking early fails.
            --ready "http: serving"
+           # The page in /www, served by WEBrick's FileHandler from the
+           # filesystem written in Ruby.
+           --path /index.html
            --expect "hello from a Ruby kernel"
            --server "WEBrick/1.9.2"
            # Two connections that never send anything, open before the first
@@ -729,16 +755,30 @@ if(QEMU_EXECUTABLE)
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/irb_session.log
            # irb loads 200-odd files through the VFS before the first prompt.
            -DSECONDS=60
-           # The kernel is serving when it comes up and stays there. This is
-           # the knock that asks for irb instead -- and it doubles as a check
-           # that the console is still watched while the server runs, which is
-           # the whole reason irb is reachable on a machine with a network.
-           -DWAKE=http:.serving
            # No space: an escaped one does not survive the trip to the driver.
            -DUNTIL=irb.finished
                       # Character classes rather than backslash escapes: CMake's regular
            # expressions are not the ones the shell or Ruby would give you.
            "-DEXPECT=irb 1[.0-9]* loaded|irb[(]main[)]:001> 1 [+] 3|=> 4|irb[(]main[)]:002> 1 [+] 3|irb[(]main[)]:003> [[]1,2[]].map!|=> :reclaimed|irb finished"
+           -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/irb_session.cmake)
+
+  # An editor run from irb, changing the page WEBrick serves. mui draws with
+  # escape sequences through its ANSI adapter and reads keys from the console
+  # Reline was reading a moment before; the session opens /www/index.html,
+  # adds a line at the end, saves with :wq, and asks irb whether the file now
+  # says so. Between them that is the terminal, the line discipline in raw
+  # mode, StringScanner, and a file from the image copied on write and
+  # rewritten -- and the server thread running behind all of it.
+  add_test(NAME verify_mui COMMAND ${CMAKE_COMMAND}
+           -DRUBY=${RUBY_EXECUTABLE}
+           -DDRIVER=${CMAKE_SOURCE_DIR}/test/terminal_driver.rb
+           -DQEMU=${QEMU_EXECUTABLE}
+           -DKERNEL=${KERNEL_ELF}
+           -DINPUT=${CMAKE_SOURCE_DIR}/test/mui_session.txt
+           -DLOG=${CMAKE_CURRENT_BINARY_DIR}/mui_session.log
+           -DSECONDS=90
+           -DUNTIL=irb.finished
+           "-DEXPECT=-- NORMAL --|edited from mui|=> true|irb finished"
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/irb_session.cmake)
 endif()
 
