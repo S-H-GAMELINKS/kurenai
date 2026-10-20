@@ -829,6 +829,23 @@ if(QEMU_EXECUTABLE)
            "-DEXPECT==> .echo: hello[\\]n.|=> Errno::ECONNREFUSED|irb finished"
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/irb_session.cmake)
 
+  # termfront, started from irb by its name. It loads -- its network layer
+  # and so openssl, socket, json and date with it -- enters the alternate
+  # screen, draws its title and demo through io/console from its writer
+  # thread, and reads the "q" that quits it with IO.select and read_nonblock.
+  # Then irb has the terminal back, cooked again, and answers the next line.
+  add_test(NAME verify_termfront COMMAND ${CMAKE_COMMAND}
+           -DRUBY=${RUBY_EXECUTABLE}
+           -DDRIVER=${CMAKE_SOURCE_DIR}/test/terminal_driver.rb
+           -DQEMU=${QEMU_EXECUTABLE}
+           -DKERNEL=${KERNEL_ELF}
+           -DINPUT=${CMAKE_SOURCE_DIR}/test/termfront_session.txt
+           -DLOG=${CMAKE_CURRENT_BINARY_DIR}/termfront_session.log
+           -DSECONDS=90
+           -DUNTIL=irb.finished
+           "-DEXPECT=T E R M F R O N T|[[]S[]] Training|=> :back_from_termfront|irb finished"
+           -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/irb_session.cmake)
+
   # TLS, end to end: OpenSSL in the kernel, through the socket layer above, to
   # a server test/tls_driver.rb runs on this side with a certificate for
   # 10.0.2.2 from a CA it made a moment ago. The kernel trusts that CA from a
