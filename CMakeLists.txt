@@ -528,10 +528,16 @@ set(QEMU_NIC
 # -cpu max is for RDSEED and RDRAND, the kernel's only source of randomness;
 # QEMU's default CPU model has neither, and kernel/random.c stops the boot
 # rather than make keys from something predictable.
+#
+# -accel kvm first, tcg if KVM is not there: drawing termfront is CPU work, and
+# under TCG's emulation Ruby runs about thirty times slower than on the host.
+# QEMU tries the accelerators in order and says on stderr why one was skipped.
+# The checks stay on TCG, so that they behave the same on every machine.
 if(QEMU_EXECUTABLE)
   add_custom_target(run
     COMMAND ${QEMU_EXECUTABLE}
             -kernel ${KERNEL_ELF}
+            -accel kvm -accel tcg
             -m 2048
             -cpu max
             -serial stdio
