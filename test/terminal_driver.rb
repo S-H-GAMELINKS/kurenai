@@ -39,12 +39,13 @@ CURSOR_REPORT = "\e[1;1R"
 CURSOR_QUERY = "\e[6n"
 
 # The network card is spelled out here as well as in the run target and in
-# cmake/verify/boot_serial.cmake, the same way -m 2048 is: each way of starting
-# this kernel builds its own command line, and a launcher that quietly differs
-# from the others is worse than the repetition.
+# cmake/verify/boot_serial.cmake, the same way -m 2048 and -cpu max are: each
+# way of starting this kernel builds its own command line, and a launcher that
+# quietly differs from the others is worse than the repetition.
 IO.popen([options[:qemu],
           "-kernel", options[:kernel],
           "-m", "2048",
+          "-cpu", "max",
           "-serial", "stdio",
           "-display", "none",
           "-no-reboot",

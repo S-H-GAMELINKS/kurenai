@@ -23,6 +23,10 @@ kernel_main(void)
     /* After the TSC is calibrated, because it is how the tick is checked. */
     irq_init();
 
+    /* Before anything asks for randomness: musl's startup does not, but CRuby
+     * seeds its hashing from getrandom before it runs a line. */
+    random_init();
+
     libc_init();
     serial_puts("libc ok\n");
 

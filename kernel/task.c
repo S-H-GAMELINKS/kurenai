@@ -55,6 +55,7 @@
 #define FUTEX_WAIT_BITSET   9
 #define FUTEX_WAKE_BITSET   10
 #define FUTEX_CMD_MASK      127   /* drops FUTEX_PRIVATE_FLAG and FUTEX_CLOCK_REALTIME */
+#define FUTEX_CLOCK_REALTIME 256
 
 enum task_state { TASK_FREE, TASK_READY, TASK_BLOCKED, TASK_DEAD };
 
@@ -489,11 +490,16 @@ task_futex(uint32_t *uaddr, int op, uint32_t val,
 
         uint64_t deadline = 0;
         if (timeout) {
-            /* FUTEX_WAIT's timeout is relative, FUTEX_WAIT_BITSET's absolute.
-             * Every clock here is the same monotonic one, so the clock flag
-             * needs no handling. */
+            /* FUTEX_WAIT's timeout is relative, FUTEX_WAIT_BITSET's absolute,
+             * and absolute on the wall clock when FUTEX_CLOCK_REALTIME is set
+             * -- which is how musl waits on a condition variable whose clock
+             * was never changed from the default. Waits are kept on the
+             * monotonic clock, so that one is moved across. */
             deadline = timespec_nanos(timeout);
-            if ((op & FUTEX_CMD_MASK) == FUTEX_WAIT) deadline += timer_nanos();
+            if ((op & FUTEX_CMD_MASK) == FUTEX_WAIT)
+                deadline += timer_nanos();
+            else if (op & FUTEX_CLOCK_REALTIME)
+                deadline = timer_from_realtime(deadline);
             if (deadline == 0) deadline = 1;
         }
         return block(futex, deadline);

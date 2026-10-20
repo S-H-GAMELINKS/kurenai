@@ -52,6 +52,7 @@ set(KERNEL_RUBY
   ${RUBY_DIR}/kernel/vfs.rb
   ${RUBY_DIR}/kernel/fd.rb
   ${RUBY_DIR}/kernel/tty.rb
+  ${RUBY_DIR}/kernel/clock.rb
   ${RUBY_DIR}/kernel/pci.rb
   ${RUBY_DIR}/kernel/e1000.rb
   ${RUBY_DIR}/kernel/arp.rb
@@ -291,6 +292,7 @@ add_executable(kernel64.elf
   vm.c
   hal.c
   syscall.c
+  random.c
   task.c
   libc_init.c
   timer.c

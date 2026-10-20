@@ -41,6 +41,7 @@ qemu_command = [
   options[:qemu],
   "-kernel", options[:kernel],
   "-m", "2048",
+  "-cpu", "max",
   "-serial", "stdio",
   "-display", "none",
   "-no-reboot",

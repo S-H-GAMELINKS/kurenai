@@ -17,6 +17,10 @@ puts [1, 2, 3].map { |n| n * n }.inspect
 Kernel::Memory.init
 puts "memory: arena #{Kernel::Memory.free_bytes / (1024 * 1024)} MB free"
 
+# The date. Before CRuby starts, so that the first Time.now it makes is right,
+# and before the network, which has certificates to check later on.
+Kernel::Clock.init
+
 # Build the filesystem table, then show what it holds. Doing this here rather
 # than on first use keeps a failure at boot, where it is visible.
 Kernel::VFS.build

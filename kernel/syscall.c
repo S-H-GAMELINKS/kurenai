@@ -71,10 +71,10 @@ sys_writev(int fd, const struct iovec_compat *iov, int iovcnt)
 }
 
 static long
-sys_clock_gettime(struct timespec_compat *tp)
+sys_clock_gettime(int clock, struct timespec_compat *tp)
 {
     if (!tp) return -EFAULT;
-    uint64_t ns = timer_nanos();
+    uint64_t ns = clock_is_realtime(clock) ? timer_realtime_nanos() : timer_nanos();
     tp->tv_sec = (int64_t)(ns / 1000000000u);
     tp->tv_nsec = (int64_t)(ns % 1000000000u);
     return 0;
@@ -118,19 +118,15 @@ sys_arch_prctl(int code, unsigned long addr)
     }
 }
 
-/* Not random. Nothing here depends on unpredictability yet; CRuby uses it to
- * seed hashing, and a fixed seed makes runs reproducible. Revisit before
- * anything security-relevant runs on this kernel. */
+/* From the CPU's own generator. This used to be xorshift over the TSC, which
+ * was enough for CRuby's hash seed and nothing else; OpenSSL makes its keys
+ * from what this returns. The flags -- GRND_NONBLOCK, GRND_RANDOM -- change
+ * nothing, because the source is never short of entropy and never blocks. */
 static long
 sys_getrandom(uint8_t *buf, size_t len)
 {
-    uint64_t state = timer_nanos() | 1u;
-    for (size_t i = 0; i < len; i++) {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        buf[i] = (uint8_t)state;
-    }
+    if (!buf && len) return -EFAULT;
+    random_fill(buf, len);
     return (long)len;
 }
 
@@ -183,15 +179,20 @@ report_unhandled(long n)
     serial_putc('\n');
 }
 
-/* Sleeps until a relative time, or an absolute one with TIMER_ABSTIME. Every
- * clock here is the same monotonic one, so the clock id is not consulted. */
+/* Sleeps until a relative time, or an absolute one with TIMER_ABSTIME. An
+ * absolute time on the wall clock is moved onto the monotonic one first; a
+ * relative one is the same length on either. */
 static long
-sys_nanosleep(int flags, const struct timespec_compat *req,
+sys_nanosleep(int clock, int flags, const struct timespec_compat *req,
               struct timespec_compat *rem)
 {
     if (!req) return -EFAULT;
     uint64_t want = (uint64_t)req->tv_sec * 1000000000u + (uint64_t)req->tv_nsec;
-    uint64_t deadline = (flags & 1) ? want : timer_nanos() + want;
+    uint64_t deadline;
+    if (flags & 1)
+        deadline = clock_is_realtime(clock) ? timer_from_realtime(want) : want;
+    else
+        deadline = timer_nanos() + want;
 
     if (task_sleep_until(deadline) == -EINTR) {
         if (rem && !(flags & 1)) {
@@ -242,12 +243,15 @@ kernel_syscall_c(long n, long a1, long a2, long a3, long a4, long a5, long a6)
     case SYS_brk:     return -ENOMEM;   /* musl falls back to mmap */
 
     /* ---- time ---- */
-    case SYS_clock_gettime: return sys_clock_gettime((struct timespec_compat *)a2);
+    case SYS_clock_gettime:
+        return sys_clock_gettime((int)a1, (struct timespec_compat *)a2);
     case SYS_nanosleep:
-        return sys_nanosleep(0, (const struct timespec_compat *)a1,
+        return sys_nanosleep(1 /* MONOTONIC */, 0,
+                             (const struct timespec_compat *)a1,
                              (struct timespec_compat *)a2);
     case SYS_clock_nanosleep:
-        return sys_nanosleep((int)a2, (const struct timespec_compat *)a3,
+        return sys_nanosleep((int)a1, (int)a2,
+                             (const struct timespec_compat *)a3,
                              (struct timespec_compat *)a4);
 
     /* ---- threads ---- */

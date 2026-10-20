@@ -377,6 +377,35 @@ prim_outl(mrb_state *mrb, mrb_value self)
     return mrb_nil_value();
 }
 
+/* One register of the CMOS clock. Selecting the register and reading it are
+ * two port accesses that must not be split, so they are one primitive; what
+ * the registers mean -- BCD or binary, 12 or 24 hours, whether an update is in
+ * progress -- is read on the Ruby side. Bit 7 of the index port is the NMI
+ * mask, and is left clear. */
+static mrb_value
+prim_cmos_read(mrb_state *mrb, mrb_value self)
+{
+    mrb_int reg;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &reg);
+    outb(0x70, (uint8_t)(reg & 0x7F));
+    return mrb_int_value(mrb, (mrb_int)inb(0x71));
+}
+
+/* The Unix time the Ruby side worked out from the CMOS clock. From here the
+ * wall clock runs on the TSC; see kernel/timer.c. */
+static mrb_value
+prim_set_realtime(mrb_state *mrb, mrb_value self)
+{
+    mrb_int seconds;
+    (void)self;
+
+    mrb_get_args(mrb, "i", &seconds);
+    if (seconds > 0) timer_set_realtime((uint64_t)seconds);
+    return mrb_nil_value();
+}
+
 static mrb_value
 prim_halt(mrb_state *mrb, mrb_value self)
 {
@@ -435,6 +464,10 @@ bridge_init(mrb_state *mrb)
                                prim_outl, MRB_ARGS_REQ(2));
     mrb_define_module_function(mrb, syscall_module, "halt",
                                prim_halt, MRB_ARGS_NONE());
+    mrb_define_module_function(mrb, syscall_module, "cmos_read",
+                               prim_cmos_read, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mrb, syscall_module, "set_realtime",
+                               prim_set_realtime, MRB_ARGS_REQ(1));
 
     /* The network's primitives live in kernel/net.c, next to the lwIP they
      * drive, but they are registered here so that the whole surface between

@@ -69,3 +69,41 @@ timer_nanos(void)
     uint64_t rem = elapsed % tsc_per_ms;
     return ms * 1000000u + (rem * 1000000u) / tsc_per_ms;
 }
+
+/* ---------------------------------------------------------------- wall clock
+ *
+ * The TSC says how long the machine has been up, not what time it is. The
+ * date comes from the CMOS clock, read once at boot by ruby/kernel/clock.rb,
+ * which hands over the Unix time it worked out. What is kept is the
+ * difference between the two clocks, so the wall clock advances with the TSC
+ * and never steps backwards under a monotonic reader.
+ *
+ * Until it is set the offset is zero and the wall clock reads as time since
+ * boot, which is what every clock read before there was a date to give. */
+
+static uint64_t realtime_offset;
+
+void
+timer_set_realtime(uint64_t unix_seconds)
+{
+    uint64_t now = unix_seconds * 1000000000u;
+    uint64_t up = timer_nanos();
+    realtime_offset = now > up ? now - up : 0;
+}
+
+uint64_t
+timer_realtime_nanos(void)
+{
+    return timer_nanos() + realtime_offset;
+}
+
+/* An absolute time on the wall clock, as a time on the monotonic one -- for a
+ * wait whose deadline was given in CLOCK_REALTIME. A deadline from before the
+ * machine started is already past; 1 rather than 0, because 0 means "no
+ * deadline" to the waits that take one. */
+uint64_t
+timer_from_realtime(uint64_t realtime_nanos)
+{
+    if (realtime_nanos <= realtime_offset) return 1;
+    return realtime_nanos - realtime_offset;
+}

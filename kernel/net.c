@@ -83,20 +83,12 @@ net_assert_failed(const char *message, const char *file, int line)
     for (;;) __asm__ volatile ("cli; hlt");
 }
 
-/* lwIP wants randomness for initial sequence numbers and DHCP transaction ids.
- * This is the same xorshift over the timestamp counter that seeds CRuby's
- * hashing, and it is no more random here than it is there; kernel/syscall.c
- * says so at the other use site. Both want revisiting together. */
+/* lwIP wants randomness for initial sequence numbers and DHCP transaction ids,
+ * and gets the CPU's, from the same source as getrandom. */
 unsigned int
 net_random(void)
 {
-    static uint64_t state;
-
-    if (state == 0) state = timer_nanos() | 1u;
-    state ^= state << 13;
-    state ^= state >> 7;
-    state ^= state << 17;
-    return (unsigned int)state;
+    return random_u32();
 }
 
 /* lwIP's clock. Milliseconds since boot is exactly what the TSC gives. */

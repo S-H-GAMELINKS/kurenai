@@ -65,7 +65,7 @@ if(DEFINED INPUT)
   # needs a shell; this project is Linux-only and already requires one.
   execute_process(
     COMMAND sh -c
-            "(sleep ${INPUT_DELAY}; cat '${INPUT}') | '${QEMU}' -kernel '${KERNEL}' -m 2048 -serial stdio -display none -no-reboot ${QEMU_NIC_ARGS} > '${LOG}' 2>&1"
+            "(sleep ${INPUT_DELAY}; cat '${INPUT}') | '${QEMU}' -kernel '${KERNEL}' -m 2048 -cpu max -serial stdio -display none -no-reboot ${QEMU_NIC_ARGS} > '${LOG}' 2>&1"
     TIMEOUT ${SECONDS}
     RESULT_VARIABLE rc
     OUTPUT_VARIABLE out
@@ -75,6 +75,7 @@ else()
     COMMAND ${QEMU}
             -kernel "${KERNEL}"
             -m 2048
+            -cpu max
             -serial file:${LOG}
             -display none
             -no-reboot

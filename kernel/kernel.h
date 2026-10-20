@@ -35,6 +35,27 @@ void     timer_init(void);
 uint64_t timer_millis(void);
 uint64_t timer_nanos(void);
 
+/* The wall clock: Unix time, set once from the CMOS clock by the Ruby side and
+ * advanced by the TSC. timer_from_realtime turns a deadline on it into one on
+ * the monotonic clock above. */
+void     timer_set_realtime(uint64_t unix_seconds);
+uint64_t timer_realtime_nanos(void);
+uint64_t timer_from_realtime(uint64_t realtime_nanos);
+
+/* Linux's clock ids that read the wall clock. Every other one is monotonic. */
+static inline int clock_is_realtime(int clock)
+{
+    return clock == 0 /* REALTIME */ || clock == 5 /* REALTIME_COARSE */ ||
+           clock == 8 /* REALTIME_ALARM */ || clock == 11 /* TAI */;
+}
+
+/* Random bytes from the CPU: RDSEED, or RDRAND where RDSEED is missing.
+ * random_init checks the CPU has one and stops the machine if not, because
+ * every other source this kernel has is predictable. */
+void   random_init(void);
+void   random_fill(void *buffer, size_t length);
+uint32_t random_u32(void);
+
 /* Does what __libc_start_main would have: thread pointer, auxiliary vector. */
 void libc_init(void);
 
