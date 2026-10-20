@@ -75,13 +75,13 @@ static const char *const names[32] = {
 };
 
 static void
-set_gate(int vector, void (*handler)(void))
+set_gate(int vector, void (*handler)(void), int ist)
 {
     uint64_t address = (uint64_t)(uintptr_t)handler;
 
     idt[vector].offset_low  = (uint16_t)(address & 0xFFFF);
     idt[vector].selector    = KERNEL_CODE_SELECTOR;
-    idt[vector].ist         = 0;
+    idt[vector].ist         = (uint8_t)ist;
     idt[vector].type_attr   = GATE_INTERRUPT;
     idt[vector].offset_mid  = (uint16_t)((address >> 16) & 0xFFFF);
     idt[vector].offset_high = (uint32_t)(address >> 32);
@@ -166,11 +166,19 @@ fault_report(struct fault_frame *frame)
     serial_puts("--- halted\n");
 }
 
+/* For irq.c. An interrupt gate, so the flag is clear on entry and a handler
+ * is never interrupted by the next tick. */
+void
+idt_set_interrupt(int vector, void (*handler)(void), int ist)
+{
+    set_gate(vector, handler, ist);
+}
+
 void
 idt_init(void)
 {
     for (int vector = 0; vector < 32; vector++)
-        set_gate(vector, handlers[vector]);
+        set_gate(vector, handlers[vector], 0);
 
     struct idt_pointer pointer = {
         .limit = sizeof(idt) - 1,

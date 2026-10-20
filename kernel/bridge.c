@@ -201,13 +201,13 @@ prim_serial_read_ready(mrb_state *mrb, mrb_value self)
     return mrb_int_value(mrb, n);
 }
 
-/* Lets the CPU rest between polls. Without it a wait is a tight loop, which
- * costs nothing here but says the wrong thing about what the kernel is doing. */
+/* Lets the CPU rest between polls, until the next tick: at most a
+ * millisecond, and nothing at all is spent while waiting. */
 static mrb_value
 prim_idle(mrb_state *mrb, mrb_value self)
 {
     (void)mrb; (void)self;
-    __asm__ volatile ("pause");
+    irq_wait();
     return mrb_nil_value();
 }
 

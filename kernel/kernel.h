@@ -20,6 +20,15 @@ void kernel_main(void);
 /* Installs handlers for the CPU's exceptions, so a fault reports itself
  * instead of resetting the machine. */
 void idt_init(void);
+void idt_set_interrupt(int vector, void (*handler)(void), int ist);
+
+/* The timer interrupt: PIT channel 0 at 1kHz through the 8259, delivered on an
+ * IST stack so an interrupted function's red zone survives. irq_wait sleeps
+ * until the next interrupt. */
+void     irq_init(void);
+void     irq_wait(void);
+uint64_t irq_tick_count(void);
+void     irq_timer(void);   /* the entry stub in isr.S */
 
 /* Monotonic time since boot, from the TSC calibrated against the PIT. */
 void     timer_init(void);

@@ -33,9 +33,9 @@ mrb_hal_task_final(mrb_state *mrb)
 void
 mrb_hal_task_idle_cpu(mrb_state *mrb)
 {
-    /* Not hlt: with no interrupt source, halting here would never return. */
+    /* The timer interrupt ends the wait within a millisecond. */
     mrb_tick(mrb);
-    __asm__ volatile ("pause");
+    irq_wait();
 }
 
 void

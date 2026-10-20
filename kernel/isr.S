@@ -84,3 +84,16 @@ isr_common:
 1:  cli
     hlt
     jmp 1b
+
+/* The timer tick. Arrives on IST1 (see kernel/irq.c), so nothing here touches
+ * the interrupted stack. Counting and acknowledging need only rax, and saving
+ * just that keeps the stub honest about what it clobbers: no C is called, so
+ * no SSE register can be disturbed behind the interrupted code's back. */
+.global irq_timer
+irq_timer:
+    pushq %rax
+    lock incq irq_ticks(%rip)
+    movb $0x20, %al         /* end of interrupt, to the master PIC */
+    outb %al, $0x20
+    popq %rax
+    iretq
