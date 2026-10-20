@@ -37,10 +37,10 @@ index fc1ad11..f9b33c4 100644
  extern int Net_get_ip(const char *name, void *ip);
  #endif
 diff --git a/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c b/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c
-index 6672002..3010438 100644
+index 6672002..a2a5b7c 100644
 --- a/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c
 +++ b/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c
-@@ -15,7 +15,11 @@
+@@ -15,23 +15,82 @@
  #include "lwip/ip.h"
  
  /* CYW43 includes for polling */
@@ -53,7 +53,80 @@ index 6672002..3010438 100644
  
  /* Pre-allocated receive buffer size for accepted TCP connections. */
  #ifndef TCP_SERVER_RECV_BUF_SIZE
-@@ -74,9 +78,14 @@ tcp_recv_callback(void *arg, struct altcp_pcb *pcb, struct pbuf *pbuf, err_t err
+ #define TCP_SERVER_RECV_BUF_SIZE 4096
+ #endif
+ 
++/* How many connections may arrive between two calls to accept.
++ *
++ * picoruby-kernel: this used to be one. A second connection arriving before
++ * the first was taken found no pre-allocated socket and was refused -- and
++ * refused wrongly, see tcp_accept_callback. A browser opens several at once,
++ * and so does anything serving it with more than one thread. */
++#ifndef TCP_SERVER_ACCEPT_QUEUE
++#define TCP_SERVER_ACCEPT_QUEUE 8
++#endif
++
+ /* TCP Server structure */
+ struct picorb_tcp_server {
+   struct altcp_pcb *listen_pcb;
+-  picorb_socket_t *accepted_socket;
+-  picorb_socket_t *pending_socket; /* pre-allocated, ready for next accept */
++  /* Claimed by the accept callback, oldest first, waiting for accept. */
++  picorb_socket_t *accepted[TCP_SERVER_ACCEPT_QUEUE];
++  int accepted_count;
++  /* Pre-allocated, so the callback never allocates. Topped up outside it, so
++   * that accepted_count + pending_count stays at TCP_SERVER_ACCEPT_QUEUE. */
++  picorb_socket_t *pending[TCP_SERVER_ACCEPT_QUEUE];
++  int pending_count;
+   picorb_state *vm;
+   int port;
+   int state;
+ };
+ 
++static picorb_socket_t *
++pending_socket_new(picorb_state *vm)
++{
++  picorb_socket_t *sock = (picorb_socket_t *)picorb_alloc(vm, sizeof(picorb_socket_t));
++  if (!sock) return NULL;
++  memset(sock, 0, sizeof(picorb_socket_t));
++  sock->recv_buf = (char *)picorb_alloc(vm, TCP_SERVER_RECV_BUF_SIZE + 1);
++  if (!sock->recv_buf) {
++    picorb_free(vm, sock);
++    return NULL;
++  }
++  sock->recv_capacity = TCP_SERVER_RECV_BUF_SIZE;
++  return sock;
++}
++
++static void
++socket_free(picorb_state *vm, picorb_socket_t *sock)
++{
++  if (sock->recv_buf) picorb_free(vm, sock->recv_buf);
++  picorb_free(vm, sock);
++}
++
++/* Tops the pre-allocated sockets back up. Called outside the callback only. */
++static void
++pending_replenish(picorb_tcp_server_t *server)
++{
++  while (server->pending_count + server->accepted_count < TCP_SERVER_ACCEPT_QUEUE) {
++    picorb_socket_t *sock = pending_socket_new(server->vm);
++    if (!sock) break;
++    server->pending[server->pending_count++] = sock;
++  }
++}
++
++static void
++pending_free_all(picorb_tcp_server_t *server)
++{
++  while (server->pending_count > 0)
++    socket_free(server->vm, server->pending[--server->pending_count]);
++}
++
+ /* Forward declarations for TCP socket callbacks */
+ static err_t tcp_recv_callback(void *arg, struct altcp_pcb *pcb, struct pbuf *pbuf, err_t err);
+ static err_t tcp_sent_callback(void *arg, struct altcp_pcb *pcb, u16_t len);
+@@ -74,9 +133,14 @@ tcp_recv_callback(void *arg, struct altcp_pcb *pcb, struct pbuf *pbuf, err_t err
    D("tcp_server.c tcp_recv_callback: receiving %zu bytes, current recv_len=%zu\n", total_len, sock->recv_len);
  
    if (new_size > sock->recv_capacity) {
@@ -71,7 +144,32 @@ index 6672002..3010438 100644
      return ERR_MEM;
    }
  
-@@ -152,6 +161,16 @@ tcp_accept_callback(void *arg, struct altcp_pcb *newpcb, err_t err)
+@@ -130,13 +194,19 @@ tcp_accept_callback(void *arg, struct altcp_pcb *newpcb, err_t err)
+     return ERR_ABRT;
+   }
+ 
+-  /* Use pre-allocated socket to avoid heap allocation in callback context. */
+-  picorb_socket_t *sock = server->pending_socket;
+-  if (!sock) {
++  /* Use pre-allocated socket to avoid heap allocation in callback context.
++   *
++   * picoruby-kernel: when there is none, the connection is refused with
++   * ERR_ABRT, not ERR_MEM. lwIP's contract is that an accept callback which
++   * aborted the pcb says so with ERR_ABRT; any other error makes lwIP abort it
++   * itself, a second time, freeing the pcb twice. The pool behind it was
++   * corrupted from then on, and the next connection handed tcp_recv_callback
++   * a pbuf pointer of 0x48. */
++  if (server->pending_count == 0) {
+     altcp_abort(newpcb);
+-    return ERR_MEM;
++    return ERR_ABRT;
+   }
+-  server->pending_socket = NULL;
++  picorb_socket_t *sock = server->pending[--server->pending_count];
+ 
+   /* Save recv_buf across memset, then reinitialize socket fields. */
+   char *recv_buf = sock->recv_buf;
+@@ -152,8 +222,18 @@ tcp_accept_callback(void *arg, struct altcp_pcb *newpcb, err_t err)
    sock->connected = true;
    sock->closed = false;
  
@@ -86,8 +184,161 @@ index 6672002..3010438 100644
 +  }
 +
    /* Store in server */
-   server->accepted_socket = sock;
+-  server->accepted_socket = sock;
++  server->accepted[server->accepted_count++] = sock;
    server->state = 1; /* has connection */
+ 
+   /* Set up callbacks with correct arg */
+@@ -182,20 +262,12 @@ TCPServer_create(picorb_state *vm, int port, int backlog)
+   server->vm = vm;
+   server->port = port;
+ 
+-  /* Pre-allocate socket for first accepted connection. */
+-  server->pending_socket = (picorb_socket_t *)picorb_alloc(vm, sizeof(picorb_socket_t));
+-  if (!server->pending_socket) {
+-    picorb_free(vm, server);
+-    return NULL;
+-  }
+-  memset(server->pending_socket, 0, sizeof(picorb_socket_t));
+-  server->pending_socket->recv_buf = (char *)picorb_alloc(vm, TCP_SERVER_RECV_BUF_SIZE + 1);
+-  if (!server->pending_socket->recv_buf) {
+-    picorb_free(vm, server->pending_socket);
++  /* Pre-allocate sockets for the first accepted connections. */
++  pending_replenish(server);
++  if (server->pending_count == 0) {
+     picorb_free(vm, server);
+     return NULL;
+   }
+-  server->pending_socket->recv_capacity = TCP_SERVER_RECV_BUF_SIZE;
+ 
+   lwip_begin();
+ 
+@@ -204,8 +276,7 @@ TCPServer_create(picorb_state *vm, int port, int backlog)
+   if (!tpcb) {
+     D("TCPServer_create: tcp_new failed");
+     lwip_end();
+-    picorb_free(vm, server->pending_socket->recv_buf);
+-    picorb_free(vm, server->pending_socket);
++    pending_free_all(server);
+     picorb_free(vm, server);
+     return NULL;
+   }
+@@ -219,8 +290,7 @@ TCPServer_create(picorb_state *vm, int port, int backlog)
+     D("TCPServer_create: altcp_tcp_wrap failed");
+     tcp_close(tpcb);
+     lwip_end();
+-    picorb_free(vm, server->pending_socket->recv_buf);
+-    picorb_free(vm, server->pending_socket);
++    pending_free_all(server);
+     picorb_free(vm, server);
+     return NULL;
+   }
+@@ -240,8 +310,7 @@ TCPServer_create(picorb_state *vm, int port, int backlog)
+     } else {
+       altcp_close(server->listen_pcb);
+       lwip_end();
+-      picorb_free(vm, server->pending_socket->recv_buf);
+-      picorb_free(vm, server->pending_socket);
++      pending_free_all(server);
+       picorb_free(vm, server);
+       return NULL;
+     }
+@@ -251,8 +320,7 @@ TCPServer_create(picorb_state *vm, int port, int backlog)
+   if (!server->listen_pcb) {
+     D("TCPServer_create: altcp_listen_with_backlog failed");
+     lwip_end();
+-    picorb_free(vm, server->pending_socket->recv_buf);
+-    picorb_free(vm, server->pending_socket);
++    pending_free_all(server);
+     picorb_free(vm, server);
+     return NULL;
+   }
+@@ -283,31 +351,19 @@ TCPServer_accept_nonblock(picorb_state *vm, picorb_tcp_server_t *server)
+ #endif
+ 
+   /* Check for already accepted socket */
+-  if (!server->accepted_socket) {
++  if (server->accepted_count == 0) {
+     return NULL; /* No pending connection */
+   }
+ 
+-  /* Return the pre-allocated socket that was claimed by the callback. */
+-  picorb_socket_t *sock = server->accepted_socket;
+-
+-  /* Clear from server */
+-  server->accepted_socket = NULL;
+-  server->state = 0;
+-
+-  /* Replenish pending_socket for the next accepted connection. */
+-  if (!server->pending_socket) {
+-    server->pending_socket = (picorb_socket_t *)picorb_alloc(vm, sizeof(picorb_socket_t));
+-    if (server->pending_socket) {
+-      memset(server->pending_socket, 0, sizeof(picorb_socket_t));
+-      server->pending_socket->recv_buf = (char *)picorb_alloc(vm, TCP_SERVER_RECV_BUF_SIZE + 1);
+-      if (!server->pending_socket->recv_buf) {
+-        picorb_free(vm, server->pending_socket);
+-        server->pending_socket = NULL;
+-      } else {
+-        server->pending_socket->recv_capacity = TCP_SERVER_RECV_BUF_SIZE;
+-      }
+-    }
+-  }
++  /* Return the oldest socket the callback claimed. */
++  picorb_socket_t *sock = server->accepted[0];
++  server->accepted_count--;
++  memmove(&server->accepted[0], &server->accepted[1],
++          sizeof(server->accepted[0]) * server->accepted_count);
++  server->state = server->accepted_count > 0;
++
++  /* Replenish pending sockets for the next accepted connections. */
++  pending_replenish(server);
+ 
+   return sock;
+ }
+@@ -320,27 +376,24 @@ TCPServer_close(picorb_state *vm, picorb_tcp_server_t *server)
+     return false;
+   }
+ 
+-  /* Clean up pending pre-allocated socket if not yet used. */
+-  if (server->pending_socket) {
+-    if (server->pending_socket->recv_buf) {
+-      picorb_free(vm, server->pending_socket->recv_buf);
+-    }
+-    picorb_free(vm, server->pending_socket);
+-    server->pending_socket = NULL;
+-  }
++  /* Clean up pending pre-allocated sockets not yet used. */
++  pending_free_all(server);
+ 
+-  /* Clean up accepted socket if present */
+-  if (server->accepted_socket) {
+-    lwip_begin();
+-    if (server->accepted_socket->pcb) {
+-      altcp_close(server->accepted_socket->pcb);
+-    }
+-    lwip_end();
+-    if (server->accepted_socket->recv_buf) {
+-      picorb_free(vm, server->accepted_socket->recv_buf);
++  /* Clean up accepted sockets nobody took. Their callbacks point at the
++   * sockets about to be freed, so they are detached first, as
++   * TCPSocket_close does. */
++  while (server->accepted_count > 0) {
++    picorb_socket_t *sock = server->accepted[--server->accepted_count];
++    if (sock->pcb) {
++      lwip_begin();
++      altcp_arg(sock->pcb, NULL);
++      altcp_recv(sock->pcb, NULL);
++      altcp_sent(sock->pcb, NULL);
++      altcp_err(sock->pcb, NULL);
++      if (altcp_close(sock->pcb) != ERR_OK) altcp_abort(sock->pcb);
++      lwip_end();
+     }
+-    picorb_free(vm, server->accepted_socket);
+-    server->accepted_socket = NULL;
++    socket_free(vm, sock);
+   }
+ 
+   if (server->listen_pcb) {
 diff --git a/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c b/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c
 index 9844bc6..2aca584 100644
 --- a/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c

@@ -32,6 +32,24 @@
  *   LWIP_ALTCP_TLS     1 -> 0.  No mbedTLS here. altcp itself stays, so the
  *                      port's altcp_* calls compile unchanged.
  *
+ * And three pools are sized for a server with threads, which this is now.
+ * picoruby-socket's are sized for a microcontroller holding one connection:
+ *
+ *   MEMP_NUM_TCP_PCB   5 -> 32.  Every connection takes one, and so does every
+ *                      connection lately closed, for as long as it sits in
+ *                      TIME_WAIT. With five, the sixth SYN of a burst found
+ *                      nothing to allocate and was dropped, and the client
+ *                      sent it again a second and then three seconds later: a
+ *                      browser's handful of parallel requests came back in six
+ *                      seconds instead of six milliseconds.
+ *
+ *   MEMP_NUM_TCP_SEG   32 -> 128.  Unacknowledged segments, across every
+ *                      connection; TCP_SND_QUEUELEN alone allows one
+ *                      connection 32.
+ *
+ *   PBUF_POOL_SIZE     24 -> 64.  Received frames waiting for lwIP. A burst
+ *                      of connections arrives as a burst of frames.
+ *
  * LWIP_NETIF_TX_SINGLE_PBUF is inherited and worth keeping: every transmit
  * arrives as one contiguous pbuf, so the driver's link output copies once and
  * never walks a chain. */
@@ -48,8 +66,9 @@
 
 /* lwIP's critical sections, which default to on. There is nothing to be
  * protected from: nothing runs concurrently with the stack. The card raises no
- * interrupt, the timer raises no interrupt, and the whole of lwIP executes
- * inside one call to Kernel::Syscall.dispatch. Leaving this at 1 would want a
+ * interrupt, the timer's interrupt never touches the network and never
+ * switches threads inside the kernel, and the whole of lwIP executes inside
+ * one call to Kernel::Syscall.dispatch. Leaving this at 1 would want a
  * sys_arch_protect this port has no honest implementation for. */
 #define SYS_LIGHTWEIGHT_PROT        0
 
@@ -57,9 +76,10 @@
 #define MEM_ALIGNMENT               8
 #define MEM_SIZE                    (128 * 1024)
 
-#define MEMP_NUM_TCP_SEG            32
+#define MEMP_NUM_TCP_PCB            32
+#define MEMP_NUM_TCP_SEG            128
 #define MEMP_NUM_ARP_QUEUE          10
-#define PBUF_POOL_SIZE              24
+#define PBUF_POOL_SIZE              64
 
 #define LWIP_ARP                    1
 #define LWIP_ETHERNET               1
