@@ -42,25 +42,40 @@ module Kernel
         [0, 0, 0, 0, 0, 0] + target_ip
     end
 
-    # Sends one request and waits for the answer. Returns the MAC the target
-    # claims, or nil if nothing came back in time.
+    # Sends a request and waits for the answer, asking again every
+    # RESEND_MS. Returns the MAC the target claims, or nil if nothing came
+    # back in time.
+    #
+    # Once, within a second, was not enough: about one boot in twenty-five
+    # nothing came back. Asking again every 200ms within the same second did
+    # not help either, so it is not one lost frame -- for a while after the
+    # card reports link up, nothing gets through at all. Why is not known;
+    # it happens with the timer interrupt switched off too, so it predates
+    # threads. DHCP, which starts right after and retries for seconds, never
+    # noticed. Asking again for up to three seconds answered forty boots out
+    # of forty.
     #
     # Frames that are not the reply being waited for are dropped rather than
     # queued. There is nothing yet to queue them for, and a driver check that
     # quietly depended on a queue would be testing the queue.
+    RESEND_MS = 200
+
     def self.resolve(target_ip, timeout_ms)
       return nil unless E1000.up?
 
       sender_mac = E1000::STATE[:mac]
       sender_ip  = IPV4_ADDRESS
-
-      Syscall.write_bytes(E1000.transmit_buffer,
-                          request(sender_mac, sender_ip, target_ip))
-      return nil unless E1000.transmit(FRAME_LENGTH)
+      frame = request(sender_mac, sender_ip, target_ip)
 
       deadline = Syscall.clock_millis + timeout_ms
+      resend_at = 0
       answer = nil
       while answer.nil? && Syscall.clock_millis < deadline
+        if Syscall.clock_millis >= resend_at
+          Syscall.write_bytes(E1000.transmit_buffer, frame)
+          return nil unless E1000.transmit(FRAME_LENGTH)
+          resend_at = Syscall.clock_millis + RESEND_MS
+        end
         E1000.each_frame do |address, length|
           next if answer
           next if length < FRAME_LENGTH
@@ -98,7 +113,7 @@ module Kernel
         return
       end
 
-      mac = resolve(GATEWAY, 1000)
+      mac = resolve(GATEWAY, 3000)
       if mac
         puts "arp: #{dotted(GATEWAY)} is at #{E1000.mac_string_of(mac)}"
       else

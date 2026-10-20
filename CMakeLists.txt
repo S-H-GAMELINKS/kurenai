@@ -669,7 +669,10 @@ if(QEMU_EXECUTABLE)
            "-DEXPECT=boot ok|e1000: no card|arp: no card|net: no card|cruby init ok|socket failed: Errno::ENETDOWN|irb\\(main\\):001"
            "-DEXPECT_NONE=\\[BUG\\]|rb_bug|ThreadError"
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial_no_nic.log
-           -DSECONDS=5
+           # The prompt arrives about 3.4 seconds in, after the thread checks
+           # and irb's two hundred requires. Five left too little room: a busy
+           # host pushed it past the end once in a full ctest run.
+           -DSECONDS=10
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/boot_serial.cmake)
 
   # The whole stack, end to end, from outside the machine: a request made by
