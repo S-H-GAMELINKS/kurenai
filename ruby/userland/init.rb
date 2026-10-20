@@ -194,6 +194,21 @@ rescue Exception => e
   puts e.backtrace.first(8).join("\n") if e.backtrace
 end
 
+# ---------------------------------------------------------------- termfront
+
+# A terminal FPS, run from irb by typing its name. It is termfront as
+# published, unmodified: required from /termfront.rb in the image, drawing
+# with escape sequences through io/console, reading keys with IO.select and
+# read_nonblock, and writing frames from a thread of its own. Quitting from its
+# title screen comes back here.
+#
+# Defined at the top level, so it is a private method of Object and irb's main
+# can call it without a receiver.
+def termfront
+  require "termfront"
+  Termfront.start
+end
+
 # ---------------------------------------------------------------- irb
 
 # The far end of the serial port is a real terminal, and the kernel now

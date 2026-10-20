@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 3.25)
 project(picoruby_kernel LANGUAGES C ASM)
 
 foreach(v BOOT_DIR RUBY_DIR PICORBC PICORUBY_LIB PICORUBY_INCLUDE_DIRS MUSL_INSTALL
-          CRUBY_LIB CRUBY_SRC PICORUBY_SRC LWIP_SRC GEMS_DIR EMBED_SCRIPT EMBED_FILES)
+          CRUBY_LIB CRUBY_SRC PICORUBY_SRC LWIP_SRC GEMS_DIR TERMFRONT_SRC EMBED_SCRIPT EMBED_FILES)
   if(NOT ${v})
     message(FATAL_ERROR "kernel: -D${v}=... is required")
   endif()
@@ -125,7 +125,8 @@ endfunction()
 # The standard library is filtered rather than embedded entire. Most of what
 # CRuby ships exists to talk to a network, a package index or a filesystem this
 # machine does not have, and it is a third of the image. What is left is what
-# irb and reline actually require.
+# irb and reline actually require, and ipaddr, which openssl/ssl.rb requires to
+# check a certificate against an IP address.
 function(embed_ruby_under root)
   cmake_parse_arguments(A "" "" "EXCLUDE" ${ARGN})
   file(GLOB_RECURSE found RELATIVE ${root} ${root}/*.rb)
@@ -146,6 +147,23 @@ embed_ruby_under(${GEMS_DIR}/reline/lib)
 # other way round.
 embed_all_ruby_under(${CRUBY_SRC}/ext/date/lib)
 
+# json's Ruby half: json.rb, json/common.rb and json/ext.rb, which requires the
+# two C halves by name.
+embed_all_ruby_under(${CRUBY_SRC}/ext/json/lib)
+
+# termfront whole, at the root like everything else, so require "termfront"
+# finds /termfront.rb and its require_relatives resolve under /termfront/.
+#
+# Its mission files are found from __dir__: mission/base.rb asks for
+# File.expand_path("../../../data/events/<id>.json", "/termfront/mission"),
+# which is /data/events/<id>.json. data/audio is left out on purpose. Without
+# the manifest and with no player on PATH, AudioManager plays nothing and
+# starts no thread or process -- there is no sound card to play on.
+embed_all_ruby_under(${TERMFRONT_SRC}/lib)
+file(GLOB TERMFRONT_EVENTS RELATIVE ${TERMFRONT_SRC} ${TERMFRONT_SRC}/data/events/*.json)
+list(SORT TERMFRONT_EVENTS)
+embed_under(${TERMFRONT_SRC} ${TERMFRONT_EVENTS})
+
 embed_ruby_under(${CRUBY_SRC}/lib EXCLUDE
   "^bundler"      # a package manager, with no packages and no network
   "^rubygems"     # likewise
@@ -158,7 +176,6 @@ embed_ruby_under(${CRUBY_SRC}/lib EXCLUDE
   "^un\\.rb"
   "^cgi"
   "^erb"
-  "^ipaddr"
   "^find\\.rb"
   "^open3")
 

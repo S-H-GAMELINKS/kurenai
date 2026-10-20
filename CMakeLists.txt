@@ -323,6 +323,30 @@ ExternalProject_Add(lwip
   STEP_TARGETS download
 )
 
+# ---------------------------------------------------------------- termfront
+# Download only, like lwIP: it is pure Ruby, and the kernel embeds its lib/ and
+# mission data into the filesystem. TERMFRONT_SOURCE_URL is where it comes
+# from, the GitHub repository unless set: pointing it at a local clone builds
+# against a commit that has not been pushed yet. The SHA is pinned either way.
+set(TERMFRONT_SOURCE_URL ${TERMFRONT_URL} CACHE STRING "Where to fetch termfront from")
+
+ExternalProject_Add(termfront
+  SOURCE_DIR ${TP}/termfront
+
+  DOWNLOAD_COMMAND ${CMAKE_COMMAND}
+      -DDIR=${TP}/termfront -DURL=${TERMFRONT_SOURCE_URL} -DREF=${TERMFRONT_REF}
+      -P ${DEPS_DIR}/fetch_sha.cmake
+
+  UPDATE_COMMAND ""
+  PATCH_COMMAND ""
+  CONFIGURE_COMMAND ""
+  BUILD_COMMAND ""
+  INSTALL_COMMAND ""
+
+  USES_TERMINAL_DOWNLOAD ON
+  STEP_TARGETS download
+)
+
 # ---------------------------------------------------------------- bundled gems
 # NOTE:
 # irb and reline ship as bundled gems rather than in the CRuby tree, so they
@@ -359,7 +383,7 @@ set(KERNEL64_ELF ${KERNEL_DIR}/kernel64.elf)
 ExternalProject_Add(kernel
   SOURCE_DIR ${CMAKE_SOURCE_DIR}/kernel
   BINARY_DIR ${KERNEL_DIR}
-  DEPENDS musl picoruby cruby_cross gems lwip
+  DEPENDS musl picoruby cruby_cross gems lwip termfront
 
   DOWNLOAD_COMMAND ""
   UPDATE_COMMAND   ""
@@ -386,6 +410,7 @@ ExternalProject_Add(kernel
     -DLWIP_SRC=${TP}/lwip
     -DPICORUBY_SRC=${TP}/picoruby
     -DGEMS_DIR=${GEMS_DIR}
+    -DTERMFRONT_SRC=${TP}/termfront
     -DCMAKE_BUILD_TYPE=Release
 
   BUILD_BYPRODUCTS ${KERNEL_ELF} ${KERNEL64_ELF}

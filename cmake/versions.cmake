@@ -23,6 +23,13 @@ set(CRUBY_REF    03b6d3f8898a28604fe6cb00eae3226b821168f4)  # v4.0.6
 set(LWIP_URL     https://github.com/lwip-tcpip/lwip.git)
 set(LWIP_REF     009c2256469004009488b3385ba269461e8eb616)  # STABLE-2_2_1_RELEASE
 
+# Set termfront version
+# The terminal FPS run from irb -- written in Ruby, by this kernel's author, and
+# run unmodified: singleplayer, campaign and the TLS multiplayer client. v0.1.9
+# is the tag; its SHA is the merge the tag sits on.
+set(TERMFRONT_URL https://github.com/S-H-GAMELINKS/termfront.git)
+set(TERMFRONT_REF 0e71130c289df3c62014fefd0e15ae73da0cc41d)  # v0.1.9
+
 # Set PicoRuby version
 # There is no tag at this commit, which is why the SHA appears bare here.
 set(PICORUBY_URL https://github.com/picoruby/picoruby.git)

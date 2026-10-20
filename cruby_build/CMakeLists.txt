@@ -118,6 +118,15 @@ set(DATE_SOURCES
   ${CRUBY_SRC}/ext/date/date_strptime.c)
 list(APPEND EXT_SOURCES ${DATE_SOURCES})
 
+# json's parser and generator, two extensions under one gem: json/ext.rb
+# requires json/ext/parser and json/ext/generator by those names. Nothing has
+# JSON in the kernel itself; termfront's mission files and its wire protocol
+# are JSON.
+set(JSON_SOURCES
+  ${CRUBY_SRC}/ext/json/parser/parser.c
+  ${CRUBY_SRC}/ext/json/generator/generator.c)
+list(APPEND EXT_SOURCES ${JSON_SOURCES})
+
 add_library(ruby-static STATIC
   ${RUBY_SOURCES}
   ${PRISM_SOURCES}
@@ -154,6 +163,16 @@ set_source_files_properties(
   PROPERTIES
   COMPILE_DEFINITIONS "RUBY_EXTCONF_H=\"date_extconf.h\""
   INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR};${CRUBY_SRC}/ext/date")
+
+# json writes no extconf.h; its extconf.rb puts what have_func found straight
+# into $defs, so these are -D flags rather than an -include. Each function is
+# present in CRuby 4.0. JSON_ENABLE_SIMD is left undefined, which is the
+# portable path: simd/conf.rb defines it only after compiling a test program
+# against the host's x86intrin.h, and there is no such test to run here.
+set_source_files_properties(${JSON_SOURCES} PROPERTIES
+  COMPILE_DEFINITIONS "HAVE_RB_ENC_INTERNED_STR=1;HAVE_RB_STR_TO_INTERNED_STR=1;HAVE_RB_HASH_NEW_CAPA=1;HAVE_RB_HASH_BULK_INSERT=1")
+set_property(SOURCE ${CRUBY_SRC}/ext/json/generator/generator.c APPEND PROPERTY
+  COMPILE_DEFINITIONS JSON_GENERATOR)
 
 # NOTE:
 # ext/socket cannot be given its extconf.h with -include, the way the three

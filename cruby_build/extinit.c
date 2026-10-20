@@ -22,7 +22,10 @@
  * and an API with holes in it.
  *
  * date_core is there for require "time": lib/time.rb requires "date" first,
- * and /date.rb is what requires date_core.so, not the other way round. */
+ * and /date.rb is what requires date_core.so, not the other way round.
+ *
+ * json is two extensions, json/ext/parser and json/ext/generator, required by
+ * those names from json/ext.rb. */
 
 void ruby_init_ext(const char *name, void (*init)(void));
 
@@ -33,6 +36,8 @@ void Init_stringio(void);
 void Init_ripper(void);
 void Init_socket(void);
 void Init_date_core(void);
+void Init_parser(void);
+void Init_generator(void);
 
 void
 Init_ext(void)
@@ -44,4 +49,6 @@ Init_ext(void)
     ruby_init_ext("ripper.so", Init_ripper);
     ruby_init_ext("socket.so", Init_socket);
     ruby_init_ext("date_core.so", Init_date_core);
+    ruby_init_ext("json/ext/parser.so", Init_parser);
+    ruby_init_ext("json/ext/generator.so", Init_generator);
 }
