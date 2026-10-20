@@ -49,6 +49,8 @@ module Kernel
 
     EBADF  = -9
     EAGAIN = -11
+    EPIPE  = -32
+    ECONNRESET = -104
     ENFILE = -23
     ENOENT = -2
     EFAULT = -14
@@ -124,6 +126,7 @@ module Kernel
         written = FD.write_socket(fd, buffer, count)
         return EBADF if written.nil?
         return EAGAIN if written == :full
+        return EPIPE if written == :broken
         return written
       end
 
@@ -170,6 +173,7 @@ module Kernel
       length = FD.read(fd, buffer, count)
       return EBADF if length.nil?
       return EAGAIN if length == :empty
+      return ECONNRESET if length == :reset
 
       length
     end
