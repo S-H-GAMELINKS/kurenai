@@ -26,6 +26,9 @@ kernel_main(void)
     libc_init();
     serial_puts("libc ok\n");
 
+    /* The code running now becomes thread 1. */
+    task_init();
+
     /* Memory is set up by the Ruby side as it boots: the VM runs from its own
      * pool, and nothing asks for pages before CRuby starts. */
     vm_start();

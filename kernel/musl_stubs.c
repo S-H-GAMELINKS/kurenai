@@ -2,11 +2,12 @@
  *
  * Five files in musl issue the syscall instruction directly and are therefore
  * untouched by patches/musl.patch. Linking CRuby pulls four of them in, by way
- * of pthread_create, sigaction and TLS setup. None is reached in practice, but
- * "not reached" is an argument, and reaching one would fault with nothing to
- * explain why.
+ * of pthread_create, sigaction and TLS setup, and two of them -- __clone and
+ * __unmapself -- are now how every thread starts and ends. musl's would trap
+ * into a kernel with the syscall instruction; here the kernel is a function
+ * call away.
  *
- * Defining the same symbols here removes the argument. These are ordinary
+ * Defining the same symbols here is what makes that so. These are ordinary
  * objects rather than archive members, so the linker takes them and never
  * extracts musl's; each of those objects defines exactly one symbol, so
  * nothing else is lost with it. verify_kernel_no_syscall_insn then holds at
@@ -34,16 +35,14 @@ __set_thread_area(void *p)
     return 0;
 }
 
-/* Thread creation. There is one CPU, no scheduler and no second stack, so this
- * refuses rather than pretending. pthread_create turns the negative return
- * into EAGAIN, which callers are required to handle. */
+/* Thread creation: kernel/task.c. musl's clone.s would trap into a kernel
+ * with the syscall instruction and then, in the child, call func(arg); here
+ * the kernel is a function call away and does both. */
 int
 __clone(int (*func)(void *), void *stack, int flags,
         void *arg, void *ptid, void *tls, void *ctid)
 {
-    (void)func; (void)stack; (void)flags;
-    (void)arg; (void)ptid; (void)tls; (void)ctid;
-    return -EAGAIN;
+    return (int)task_clone(func, stack, flags, arg, ptid, tls, ctid);
 }
 
 /* The signal return trampoline. Only ever entered by a kernel delivering a
@@ -56,11 +55,11 @@ __restore_rt(void)
     for (;;) __asm__ volatile ("cli; hlt");
 }
 
-/* Unmaps a thread's own stack as it exits. Unreachable while __clone refuses. */
+/* Unmaps a thread's own stack as it exits -- how every detached thread ends,
+ * and CRuby's threads are all detached. The stack is the one being stood on,
+ * so the task that runs next gives it back. */
 void
 __unmapself(void *base, unsigned long size)
 {
-    (void)base; (void)size;
-    serial_puts("kernel: __unmapself reached, but no thread was ever created\n");
-    for (;;) __asm__ volatile ("cli; hlt");
+    task_exit_unmapping(base, size);
 }

@@ -46,13 +46,10 @@ static struct RClass *syscall_module;
  * the program making the call. */
 #define WAIT_AGAIN (-512)
 
-/* The deadline of the call being retried, in milliseconds since boot, or -1
- * for none. Set by the first dispatch of a call and kept until the call
- * finishes, so a timeout counts from when the program asked rather than from
- * the latest retry. */
-#define NO_DEADLINE (-1)
-static mrb_int held_deadline = NO_DEADLINE;
-static int retrying;
+/* The deadline of the call being retried lives with the thread making it,
+ * in task_retry_state(): set by the first dispatch of a call and kept until
+ * the call finishes, so a timeout counts from when the program asked rather
+ * than from the latest retry. */
 
 /* The VM's C recursion, and lwIP's beneath it, runs on this rather than on the
  * caller's stack. It does not need to be per caller: there is only ever one
@@ -68,6 +65,12 @@ bridge_route(long number)
 {
     if (number < 0 || number >= ROUTE_WORDS * 64) return;
     routed[number / 64] |= (uint64_t)1 << (number % 64);
+}
+
+int
+bridge_in_dispatch(void)
+{
+    return in_dispatch;
 }
 
 static int
@@ -237,8 +240,9 @@ prim_held_deadline(mrb_state *mrb, mrb_value self)
     (void)self;
 
     mrb_get_args(mrb, "i", &proposed);
-    if (!retrying) held_deadline = proposed;
-    return mrb_int_value(mrb, held_deadline);
+    struct syscall_retry *retry = task_retry_state();
+    if (!retry->retrying) retry->deadline = (long)proposed;
+    return mrb_int_value(mrb, (mrb_int)retry->deadline);
 }
 
 /* Lets the CPU rest between polls, until the next tick: at most a
@@ -501,6 +505,7 @@ kernel_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6)
           serial_puts("<sys "); while(i--) serial_putc(b[i]); serial_puts(">"); }
 #endif
         struct dispatch_call call = { mrb, n, { a1, a2, a3, a4, a5, a6 } };
+        struct syscall_retry *retry = task_retry_state();
         long ret;
         for (;;) {
             in_dispatch = 1;
@@ -508,11 +513,14 @@ kernel_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6)
                                 dispatch_stack + sizeof(dispatch_stack));
             in_dispatch = 0;
             if (ret != WAIT_AGAIN) break;
-            retrying = 1;
-            irq_wait();
+            retry->retrying = 1;
+            /* Other threads run until the next tick. A signal -- CRuby's
+             * timer thread saying this one has an interrupt to look at --
+             * ends the wait, and the call returns EINTR as poll would. */
+            if (task_sleep_tick() == -EINTR) { ret = -EINTR; break; }
         }
-        retrying = 0;
-        held_deadline = NO_DEADLINE;
+        retry->retrying = 0;
+        retry->deadline = SYSCALL_NO_DEADLINE;
 #ifdef BRIDGE_TRACE
         { char b[16]; int i=0; long v=ret<0?-ret:ret; if(ret<0)serial_putc('-');
           if(!v)b[i++]='0'; while(v){b[i++]=(char)('0'+v%10);v/=10;}

@@ -25,6 +25,22 @@ SECTIONS
   etext = .;
 
   .rodata : { *(.rodata*) }
+
+  /* Thread-local storage: the initial image every thread is given a copy of.
+   * Named here rather than left for the linker to place as an orphan, so the
+   * extent of the TLS segment can be stated as symbols. There is no loader to
+   * read program headers at run time, and kernel/libc_init.c builds musl the
+   * PT_TLS header it would have been given from these. .tdata may well be
+   * empty -- CRuby's thread locals all start at zero -- in which case the
+   * segment starts at .tbss. verify_kernel_tls checks these against the
+   * PT_TLS the linker actually emits. */
+  .tdata : { *(.tdata .tdata.*) }
+  .tbss  : { *(.tbss .tbss.*) *(.tcommon) }
+  __tls_start = SIZEOF(.tdata) ? ADDR(.tdata) : ADDR(.tbss);
+  __tls_filesz = SIZEOF(.tdata);
+  __tls_memsz = ADDR(.tbss) + SIZEOF(.tbss) - __tls_start;
+  __tls_align = MAX(ALIGNOF(.tdata), ALIGNOF(.tbss));
+
   .data   : { *(.data*) }
 
   edata = .;

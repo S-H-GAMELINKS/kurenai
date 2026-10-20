@@ -92,6 +92,42 @@ long kernel_syscall_c(long n, long a1, long a2, long a3, long a4, long a5, long 
 /* Sends one syscall number to Kernel::Syscall.dispatch from now on. */
 void bridge_route(long number);
 
+/* Whether the VM is servicing a call right now. Nothing may wait for another
+ * thread while it is: no other thread can run until the dispatch returns. */
+int bridge_in_dispatch(void);
+
+/* Linux's struct timespec on x86_64. */
+struct timespec_compat {
+    int64_t tv_sec;
+    int64_t tv_nsec;
+};
+
+/* A routed call that answered WAIT_AGAIN and is being retried: the deadline
+ * its first dispatch proposed, kept for every retry after it. One per thread,
+ * because each thread can be in the middle of its own. */
+#define SYSCALL_NO_DEADLINE (-1)
+struct syscall_retry {
+    long deadline;
+    int  retrying;
+};
+
+/* Threads: kernel/task.c. */
+void  task_init(void);
+int   task_current_tid(void);
+struct syscall_retry *task_retry_state(void);
+long  task_clone(int (*func)(void *), void *stack, int flags, void *arg,
+                 int *ptid, void *tls, int *ctid);
+void  task_exit(int code) __attribute__((noreturn));
+void  task_exit_unmapping(void *base, size_t size) __attribute__((noreturn));
+long  task_futex(uint32_t *uaddr, int op, uint32_t val,
+                 const struct timespec_compat *timeout, uint32_t *uaddr2,
+                 uint32_t val3);
+long  task_sleep_until(uint64_t deadline_nanos);
+long  task_sleep_tick(void);
+long  task_yield(void);
+long  task_tkill(int tid, int sig);
+long  task_set_tid_address(int *ctid);
+
 /* lwIP and the primitives the Ruby driver drives it through. Registered on the
  * same module as the rest, from bridge_init. */
 struct RClass;

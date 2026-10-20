@@ -52,6 +52,49 @@ require "ripper"
 puts "io/console: IO#raw #{IO.method_defined?(:raw)}"
 puts "ripper: #{Ripper.lex("1 + 1").length} tokens from Ripper.lex"
 
+# ---------------------------------------------------------------- threads
+#
+# Real ones: each Thread.new is pthread_create, which is __clone, which is a
+# task in kernel/task.c with its own stack and its own copy of the TLS. Waiting
+# -- join, Queue#pop, a contended Mutex, sleep -- is a futex, and Timeout is a
+# second thread raising into the first, woken out of its condition variable.
+begin
+  values = 4.times.map { |i| Thread.new { i + 1 } }.map(&:value)
+  puts "threads: #{values.length} joined #{values.inspect}"
+
+  # More threads than the kernel has slots for, a few at a time: each one that
+  # finishes has to give back its slot and its stack for this to get to the end.
+  50.times { 4.times.map { Thread.new {} }.each(&:join) }
+  puts "threads: 200 started and finished"
+
+  queue = Queue.new
+  producer = Thread.new do
+    100.times { |i| queue << i }
+    queue << nil
+  end
+  items = 0
+  items += 1 while queue.pop
+  producer.join
+  puts "queue: #{items} items"
+
+  mutex = Mutex.new
+  total = 0
+  4.times.map { Thread.new { 250.times { mutex.synchronize { total += 1 } } } }
+   .each(&:join)
+  puts "mutex: #{total}"
+
+  require "timeout"
+  begin
+    Timeout.timeout(0.1) { sleep 1 }
+    puts "timeout: did not fire"
+  rescue Timeout::Error => e
+    puts "timeout: #{e.class}"
+  end
+rescue Exception => e
+  puts "threads failed: #{e.class}: #{e.message}"
+  puts e.backtrace.first(8).join("\n") if e.backtrace
+end
+
 # ---------------------------------------------------------------- socket
 #
 # ext/socket is linked in and registered, but the kernel has no network yet.
