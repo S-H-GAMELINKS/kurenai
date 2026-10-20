@@ -31,12 +31,6 @@ struct iovec_compat {
     size_t      len;
 };
 
-/* Linux's struct timespec on x86_64. */
-struct timespec_compat {
-    int64_t tv_sec;
-    int64_t tv_nsec;
-};
-
 struct winsize_compat {
     uint16_t ws_row, ws_col, ws_xpixel, ws_ypixel;
 };
@@ -189,6 +183,28 @@ report_unhandled(long n)
     serial_putc('\n');
 }
 
+/* Sleeps until a relative time, or an absolute one with TIMER_ABSTIME. Every
+ * clock here is the same monotonic one, so the clock id is not consulted. */
+static long
+sys_nanosleep(int flags, const struct timespec_compat *req,
+              struct timespec_compat *rem)
+{
+    if (!req) return -EFAULT;
+    uint64_t want = (uint64_t)req->tv_sec * 1000000000u + (uint64_t)req->tv_nsec;
+    uint64_t deadline = (flags & 1) ? want : timer_nanos() + want;
+
+    if (task_sleep_until(deadline) == -EINTR) {
+        if (rem && !(flags & 1)) {
+            uint64_t now = timer_nanos();
+            uint64_t left = now < deadline ? deadline - now : 0;
+            rem->tv_sec = (int64_t)(left / 1000000000u);
+            rem->tv_nsec = (int64_t)(left % 1000000000u);
+        }
+        return -EINTR;
+    }
+    return 0;
+}
+
 /* Reached from kernel/bridge.c for everything not routed to Ruby. */
 long
 kernel_syscall_c(long n, long a1, long a2, long a3, long a4, long a5, long a6)
@@ -227,19 +243,33 @@ kernel_syscall_c(long n, long a1, long a2, long a3, long a4, long a5, long a6)
 
     /* ---- time ---- */
     case SYS_clock_gettime: return sys_clock_gettime((struct timespec_compat *)a2);
-    case SYS_nanosleep:     return 0;
+    case SYS_nanosleep:
+        return sys_nanosleep(0, (const struct timespec_compat *)a1,
+                             (struct timespec_compat *)a2);
+    case SYS_clock_nanosleep:
+        return sys_nanosleep((int)a2, (const struct timespec_compat *)a3,
+                             (struct timespec_compat *)a4);
+
+    /* ---- threads ---- */
+    case SYS_futex:
+        return task_futex((uint32_t *)a1, (int)a2, (uint32_t)a3,
+                          (const struct timespec_compat *)a4,
+                          (uint32_t *)a5, (uint32_t)a6);
+    case SYS_sched_yield: return task_yield();
+    /* One CPU: every barrier membarrier could ask for already holds. */
+    case SYS_membarrier:  return 0;
 
     /* ---- cpu and process ---- */
     case SYS_arch_prctl: return sys_arch_prctl((int)a1, (unsigned long)a2);
     case SYS_getrandom:  return sys_getrandom((uint8_t *)a1, (size_t)a2);
     case SYS_uname:      return sys_uname((char *)a1);
     case SYS_getpid:     return 1;
-    case SYS_gettid:     return 1;
+    case SYS_gettid:     return task_current_tid();
     case SYS_getuid:
     case SYS_geteuid:
     case SYS_getgid:
     case SYS_getegid:    return 0;
-    case SYS_set_tid_address: return 1;
+    case SYS_set_tid_address: return task_set_tid_address((int *)a1);
     case SYS_prctl:      return 0;
     case SYS_readlink:
     case SYS_readlinkat:
@@ -248,7 +278,8 @@ kernel_syscall_c(long n, long a1, long a2, long a3, long a4, long a5, long a6)
          * back to the name given to ruby_script(). */
         return -ENOENT;
     case SYS_sigaltstack: return 0;   /* no signals, so no alternate stack */
-    case SYS_tkill:      return 0;   /* the only thread is the one signalling */
+    case SYS_tkill:      return task_tkill((int)a1, (int)a2);
+    case SYS_tgkill:     return task_tkill((int)a2, (int)a3);
     case SYS_sched_getaffinity: return -ENOSYS;
 
     /* IO.copy_stream tries sendfile before falling back to read and write, and
@@ -261,10 +292,17 @@ kernel_syscall_c(long n, long a1, long a2, long a3, long a4, long a5, long a6)
      * them. Reporting success keeps Signal.trap working, and its handlers are
      * simply dead code. */
     case SYS_rt_sigaction:
+        return 0;
     case SYS_rt_sigprocmask:
+        /* The old mask is all clear, and saying so matters: pthread_create
+         * copies it into the new thread, which otherwise starts with whatever
+         * was on the stack. */
+        if (a3) *(uint64_t *)a3 = 0;
         return 0;
 
+    /* exit ends the calling thread; exit_group ends everything. */
     case SYS_exit:
+        task_exit((int)a1);
     case SYS_exit_group:
         serial_puts("kernel: halted\n");
         for (;;) __asm__ volatile ("cli; hlt");

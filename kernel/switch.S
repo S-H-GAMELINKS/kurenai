@@ -19,3 +19,41 @@ call_on_stack:
     movq %rbp, %rsp
     popq %rbp
     ret
+
+/* void switch_to(uint64_t *save_rsp, uint64_t next_rsp)
+ *
+ * Saves the callee-saved registers on the current stack, records where that
+ * stack ended up, and resumes the task whose stack is next_rsp -- either
+ * inside its own switch_to, which returns into schedule(), or at
+ * task_trampoline for a task that has never run. Caller-saved registers need
+ * no saving: the caller already assumed they were lost. CRuby's Fiber
+ * switcher, coroutine/amd64/Context.S, is the same shape. */
+.global switch_to
+switch_to:
+    pushq %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+    movq %rsp, (%rdi)
+    movq %rsi, %rsp
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    ret
+
+/* Where a new task starts, with the function musl gave __clone in r12 and its
+ * argument in r13 (see task_clone). What musl's own clone.s does in the child:
+ * call func(arg), and exit the thread with what it returns. */
+.global task_trampoline
+task_trampoline:
+    call task_started
+    movq %r13, %rdi
+    call *%r12
+    movl %eax, %edi
+    call task_exit
+    ud2

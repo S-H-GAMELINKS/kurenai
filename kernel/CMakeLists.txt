@@ -269,6 +269,7 @@ add_executable(kernel64.elf
   vm.c
   hal.c
   syscall.c
+  task.c
   libc_init.c
   timer.c
   musl_stubs.c

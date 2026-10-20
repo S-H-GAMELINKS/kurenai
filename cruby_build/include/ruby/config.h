@@ -469,6 +469,12 @@
 #define SET_CURRENT_THREAD_NAME(name) pthread_setname_np(pthread_self(), name)
 #define SET_ANOTHER_THREAD_NAME(thid,name) pthread_setname_np(thid, name)
 #define RB_THREAD_LOCAL_SPECIFIER _Thread_local
+/* musl's value. Under -ffreestanding clang's own limits.h is found first and
+ * does not go on to musl's, so this never arrives the ordinary way -- and
+ * thread_pthread.c only calls pthread_attr_setstacksize when it is defined.
+ * Without it every Ruby thread got musl's default 128KB of machine stack
+ * instead of the 1MB CRuby asks for. */
+#define PTHREAD_STACK_MIN 2048
 #define DEFINE_MCONTEXT_PTR(mc, uc) mcontext_t *mc = &(uc)->uc_mcontext
 /* REMOVED: HAVE_GETCONTEXT, HAVE_SETCONTEXT - no ucontext support */
 /* REMOVED: HAVE_SYS_USER_H - no ELF/debug support */

@@ -24,6 +24,7 @@ find_program(CLANG_EXECUTABLE clang REQUIRED)
 find_program(LLVM_AR_EXECUTABLE llvm-ar REQUIRED)
 find_program(LLVM_RANLIB_EXECUTABLE llvm-ranlib REQUIRED)
 find_program(LLVM_NM_EXECUTABLE llvm-nm REQUIRED)
+find_program(LLVM_READELF_EXECUTABLE llvm-readelf REQUIRED)
 find_program(LLVM_OBJDUMP_EXECUTABLE llvm-objdump REQUIRED)
 find_program(MAKE_EXECUTABLE make REQUIRED)
 find_program(RAKE_EXECUTABLE rake REQUIRED)  # PicoRuby and mruby build with rake
@@ -527,6 +528,11 @@ add_test(NAME verify_kernel_no_syscall_insn COMMAND ${CMAKE_COMMAND}
          -DELF=${KERNEL64_ELF} -DLLVM_OBJDUMP=${LLVM_OBJDUMP_EXECUTABLE}
          -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/no_syscall_insn.cmake)
 
+add_test(NAME verify_kernel_tls COMMAND ${CMAKE_COMMAND}
+         -DELF=${KERNEL64_ELF} -DLLVM_READELF=${LLVM_READELF_EXECUTABLE}
+         -DLLVM_NM=${LLVM_NM_EXECUTABLE}
+         -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/tls_segment.cmake)
+
 if(QEMU_EXECUTABLE)
   add_test(NAME verify_kernel_boots COMMAND ${CMAKE_COMMAND}
            -DQEMU=${QEMU_EXECUTABLE}
@@ -537,6 +543,13 @@ if(QEMU_EXECUTABLE)
            # input. With no input the system sits at the prompt, which is
            # correct, so the summary printed after the REPL belongs to the
            # test that actually drives it.
+           # The thread lines are pthread_create reaching kernel/task.c and
+           # coming back: values through join, a Queue between two threads, a
+           # contended Mutex, and Timeout, which is one thread raising into
+           # another blocked on a condition variable -- all of it futex. Two
+           # hundred threads, four at a time, is more than the kernel has
+           # slots for, so finishing says slots and stacks are given back.
+           #
            # The irq line counts ticks rather than announcing them: twenty
            # milliseconds by the TSC, and the number of timer interrupts that
            # arrived in them. A PIC left masked or a gate pointing nowhere both
@@ -580,12 +593,15 @@ if(QEMU_EXECUTABLE)
            # answers so the server can name itself, musl resolves a numeric
            # address with no resolver behind it, and socket.rb was found in the
            # Ruby filesystem -- Addrinfo is defined there, not in the C half.
-           "-DEXPECT=boot ok|traps ok|irq: timer 1000 Hz, [1-9][0-9]* ticks in 20 ms|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|http: listening on 0[.]0[.]0[.]0:80|http: served 0 requests|irb 1[.0-9]* loaded|irb\\(main\\):001"
+           "-DEXPECT=boot ok|traps ok|irq: timer 1000 Hz, [1-9][0-9]* ticks in 20 ms|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|threads: 4 joined [[]1, 2, 3, 4[]]|threads: 200 started and finished|queue: 100 items|mutex: 1000|timeout: Timeout::Error|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|http: listening on 0[.]0[.]0[.]0:80|http: served 0 requests|irb 1[.0-9]* loaded|irb\\(main\\):001"
            # Nothing may reach rb_bug: CRuby's answer to an impossible libc
            # result is to abort, and it has no way to say so on this machine.
-           # ThreadError likewise, because pthread_create refusing is a thing
-           # the userland has to be arranged around rather than discover.
-           "-DEXPECT_NONE=\\[BUG\\]|rb_bug|ThreadError|lwip: assertion failed|frames dropped"
+           # ThreadError likewise: threads are real now, and failing to make one
+           # is a kernel bug rather than a limitation. An unhandled syscall
+           # names what the kernel was asked for and did not do -- futex was
+           # the first of those threads would hit -- and a futex wait inside a
+           # dispatch is the one wait that could never be woken.
+           "-DEXPECT_NONE=\\[BUG\\]|rb_bug|ThreadError|threads failed|unhandled syscall|futex wait inside a dispatch|lwip: assertion failed|frames dropped"
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/boot_serial.log
            # The kernel halts instead of exiting, so QEMU always runs for the
            # full timeout. Booting takes well under a second here; the margin
