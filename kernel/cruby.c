@@ -82,7 +82,7 @@ cruby_start(void)
     rb_call_builtin_inits();
     Init_builtin_features();
 
-    ruby_script("picoruby-kernel");
+    ruby_script("kurenai");
 
 
     serial_puts("cruby init ok\n");

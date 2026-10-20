@@ -11,8 +11,8 @@
  * this machine does not have. Writing the four lines that are actually needed
  * is smaller than explaining which parts of somebody else's port to ignore. */
 
-#ifndef PICORUBY_KERNEL_LWIP_ARCH_CC_H
-#define PICORUBY_KERNEL_LWIP_ARCH_CC_H
+#ifndef KURENAI_LWIP_ARCH_CC_H
+#define KURENAI_LWIP_ARCH_CC_H
 
 #define BYTE_ORDER LITTLE_ENDIAN
 
@@ -47,4 +47,4 @@ void net_assert_failed(const char *message, const char *file, int line);
 unsigned int net_random(void);
 #define LWIP_RAND() ((u32_t)net_random())
 
-#endif /* PICORUBY_KERNEL_LWIP_ARCH_CC_H */
+#endif /* KURENAI_LWIP_ARCH_CC_H */

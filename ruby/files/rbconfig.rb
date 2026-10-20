@@ -1,4 +1,4 @@
-# RbConfig for picoruby-kernel.
+# RbConfig for Kurenai.
 #
 # configure normally generates this by inspecting the machine it builds on.
 # That is the wrong machine: what matters is the one the code runs on, which is

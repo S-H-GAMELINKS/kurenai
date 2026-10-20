@@ -7,7 +7,7 @@
  * getpwent and getgrent are left out on purpose: there is no /etc/passwd or
  * /etc/group, so Etc.getpwnam and friends become NotImplementedError instead
  * of searching a file that does not exist. uname is the kernel's own and
- * answers with nodename "picoruby-kernel". */
+ * answers with nodename "kurenai". */
 #define HAVE_SYS_UTSNAME_H 1
 #define HAVE_UNAME 1
 #define HAVE_SYSCONF 1

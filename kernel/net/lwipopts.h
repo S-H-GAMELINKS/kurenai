@@ -54,8 +54,8 @@
  * arrives as one contiguous pbuf, so the driver's link output copies once and
  * never walks a chain. */
 
-#ifndef PICORUBY_KERNEL_LWIPOPTS_H
-#define PICORUBY_KERNEL_LWIPOPTS_H
+#ifndef KURENAI_LWIPOPTS_H
+#define KURENAI_LWIPOPTS_H
 
 /* No threads and no sockets: lwIP is driven by being polled, from the wait
  * loops in the Ruby kernel. NO_SYS 1 is also what makes the whole of
@@ -126,4 +126,4 @@
  * kernel/net/arch/cc.h. lwIP's arch.h is explicit that they belong to the port
  * rather than to the options. */
 
-#endif /* PICORUBY_KERNEL_LWIPOPTS_H */
+#endif /* KURENAI_LWIPOPTS_H */

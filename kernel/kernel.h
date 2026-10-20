@@ -1,5 +1,5 @@
-#ifndef PICORUBY_KERNEL_H
-#define PICORUBY_KERNEL_H
+#ifndef KURENAI_H
+#define KURENAI_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -138,4 +138,4 @@ void  preempt_enable(void);
 struct RClass;
 void net_init(struct mrb_state *mrb, struct RClass *module);
 
-#endif /* PICORUBY_KERNEL_H */
+#endif /* KURENAI_H */

@@ -1,5 +1,5 @@
 diff --git a/mrbgems/picoruby-socket/include/socket.h b/mrbgems/picoruby-socket/include/socket.h
-index fc1ad11..f9b33c4 100644
+index fc1ad11..dc25e54 100644
 --- a/mrbgems/picoruby-socket/include/socket.h
 +++ b/mrbgems/picoruby-socket/include/socket.h
 @@ -5,9 +5,19 @@
@@ -11,7 +11,7 @@ index fc1ad11..f9b33c4 100644
 -  #define PICORB_PLATFORM_POSIX 1
 +/* Platform detection.
 + *
-+ * picoruby-kernel: sniffing __linux__ is not safe for a freestanding target.
++ * kurenai: sniffing __linux__ is not safe for a freestanding target.
 + * clang defines __linux__ and __unix__ from its default triple even under
 + * -ffreestanding -nostdinc, so a bare-metal build that selected the lwIP
 + * branch on the rake side would have selected the POSIX picorb_socket_t here
@@ -29,7 +29,7 @@ index fc1ad11..f9b33c4 100644
  extern void lwip_begin(void);
  extern void lwip_end(void);
  extern void Net_busy_wait_ms(int ms);
-+/* picoruby-kernel: gives the link a turn, in place of cyw43_arch_poll. A port
++/* kurenai: gives the link a turn, in place of cyw43_arch_poll. A port
 + * whose driver is not a cyw43 on SPI needs the same hook under a name that
 + * does not name somebody else's wifi chip. */
 +extern void Net_poll(void);
@@ -37,7 +37,7 @@ index fc1ad11..f9b33c4 100644
  extern int Net_get_ip(const char *name, void *ip);
  #endif
 diff --git a/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c b/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c
-index 6672002..a2a5b7c 100644
+index 6672002..65e4e6a 100644
 --- a/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c
 +++ b/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c
 @@ -15,23 +15,82 @@
@@ -45,7 +45,7 @@ index 6672002..a2a5b7c 100644
  
  /* CYW43 includes for polling */
 -#include "pico/cyw43_arch.h"
-+/* picoruby-kernel: the driver here is not a cyw43 on SPI, so there is no
++/* kurenai: the driver here is not a cyw43 on SPI, so there is no
 + * cyw43_arch to poll. Net_poll is the port's own name for the same hook. */
 +#ifndef PICO_CYW43_ARCH_POLL
 +#define cyw43_arch_poll() Net_poll()
@@ -58,7 +58,7 @@ index 6672002..a2a5b7c 100644
  
 +/* How many connections may arrive between two calls to accept.
 + *
-+ * picoruby-kernel: this used to be one. A second connection arriving before
++ * kurenai: this used to be one. A second connection arriving before
 + * the first was taken found no pre-allocated socket and was refused -- and
 + * refused wrongly, see tcp_accept_callback. A browser opens several at once,
 + * and so does anything serving it with more than one thread. */
@@ -137,7 +137,7 @@ index 6672002..a2a5b7c 100644
 +     * consumed and will be delivered again later, so freeing it here loses the
 +     * data and leaves lwIP holding a pointer it intends to reuse.
 +     *
-+     * picoruby-kernel: keep the pbuf. TCP_WND is configured no larger than
++     * kurenai: keep the pbuf. TCP_WND is configured no larger than
 +     * recv_capacity, which should make this unreachable -- but a receive path
 +     * whose overflow behaviour is a use-after-free is not one to lean on. */
 +    D("tcp_server.c tcp_recv_callback: buffer full, asking lwIP to keep it");
@@ -153,7 +153,7 @@ index 6672002..a2a5b7c 100644
 -  if (!sock) {
 +  /* Use pre-allocated socket to avoid heap allocation in callback context.
 +   *
-+   * picoruby-kernel: when there is none, the connection is refused with
++   * kurenai: when there is none, the connection is refused with
 +   * ERR_ABRT, not ERR_MEM. lwIP's contract is that an accept callback which
 +   * aborted the pcb says so with ERR_ABRT; any other error makes lwIP abort it
 +   * itself, a second time, freeing the pcb twice. The pool behind it was
@@ -173,7 +173,7 @@ index 6672002..a2a5b7c 100644
    sock->connected = true;
    sock->closed = false;
  
-+  /* picoruby-kernel: record who connected. The memset above cleared these and
++  /* kurenai: record who connected. The memset above cleared these and
 +   * nothing filled them in, so an accepted socket reported an empty host and
 +   * port zero -- which is what getpeername has to answer and what an access
 +   * log has to print. */
@@ -340,14 +340,14 @@ index 6672002..a2a5b7c 100644
  
    if (server->listen_pcb) {
 diff --git a/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c b/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c
-index 9844bc6..2aca584 100644
+index 9844bc6..f38f92f 100644
 --- a/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c
 +++ b/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c
 @@ -14,6 +14,11 @@
  #include "lwip/dns.h"
  #include "lwip/err.h"
  
-+/* picoruby-kernel: see the note in tcp_server.c. */
++/* kurenai: see the note in tcp_server.c. */
 +#ifndef PICO_CYW43_ARCH_POLL
 +#define cyw43_arch_poll() Net_poll()
 +#endif
@@ -356,14 +356,14 @@ index 9844bc6..2aca584 100644
  #ifndef TCP_RECV_BUF_SIZE
  #define TCP_RECV_BUF_SIZE 4096
 diff --git a/mrbgems/picoruby-socket/ports/rp2040/udp_socket.c b/mrbgems/picoruby-socket/ports/rp2040/udp_socket.c
-index 180352c..6723e49 100644
+index 180352c..905901c 100644
 --- a/mrbgems/picoruby-socket/ports/rp2040/udp_socket.c
 +++ b/mrbgems/picoruby-socket/ports/rp2040/udp_socket.c
 @@ -13,6 +13,11 @@
  #include "lwip/udp.h"
  #include "lwip/dns.h"
  
-+/* picoruby-kernel: see the note in tcp_server.c. */
++/* kurenai: see the note in tcp_server.c. */
 +#ifndef PICO_CYW43_ARCH_POLL
 +#define cyw43_arch_poll() Net_poll()
 +#endif

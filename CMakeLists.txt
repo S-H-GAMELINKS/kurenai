@@ -10,7 +10,7 @@ cmake_minimum_required(VERSION 3.25.0)
 # try_compile check. Nothing is compiled at this layer, and it also keeps the
 # freestanding toolchain question out of the superbuild: compiling is the
 # responsibility of the child project added later.
-project(picoruby_kernel_superbuild LANGUAGES NONE)
+project(kurenai_superbuild LANGUAGES NONE)
 
 include(ExternalProject)
 include(ProcessorCount)
@@ -668,7 +668,7 @@ if(QEMU_EXECUTABLE)
            # answers so the server can name itself, musl resolves a numeric
            # address with no resolver behind it, and socket.rb was found in the
            # Ruby filesystem -- Addrinfo is defined there, not in the C half.
-           "-DEXPECT=boot ok|traps ok|irq: timer 1000 Hz, [1-9][0-9]* ticks in 20 ms|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|threads: 4 joined [[]1, 2, 3, 4[]]|threads: 200 started and finished|queue: 100 items|mutex: 1000|preempt: a spinning thread gave way|timeout: Timeout::Error|fs: 2 lines, 36 bytes|fs: required a file written at run time, ANSWER = 42|fs: mtime moved true|fs: /tmp holds [[].[.]., .[.][.]., .renamed[.]txt.[]]|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname picoruby-kernel|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|http: serving /www on 0[.]0[.]0[.]0:80, log in /var/log/webrick.log"
+           "-DEXPECT=boot ok|traps ok|irq: timer 1000 Hz, [1-9][0-9]* ticks in 20 ms|libc ok|picoruby vm ok|cruby init ok|2\\*\\*100 = 1267650600228229401496703205376|hello from a file served by the Ruby kernel|read 268 bytes from the Ruby VFS|io/console: IO#raw true|ripper: 5 tokens from Ripper.lex|threads: 4 joined [[]1, 2, 3, 4[]]|threads: 200 started and finished|queue: 100 items|mutex: 1000|preempt: a spinning thread gave way|timeout: Timeout::Error|fs: 2 lines, 36 bytes|fs: required a file written at run time, ANSWER = 42|fs: mtime moved true|fs: /tmp holds [[].[.]., .[.][.]., .renamed[.]txt.[]]|e1000: base [0-9a-f]+ mac 52:54:00:12:34:56 link up|arp: 10[.]0[.]2[.]2 is at 52:55:0a:00:02:02|net: 10[.]0[.]2[.]15/24 gw 10[.]0[.]2[.]2 up|net: tcp listener idle|socket: AF_INET 2, SOMAXCONN 128|socket: hostname kurenai|socket: Addrinfo #<Addrinfo: 10[.]0[.]2[.]15:80 TCP>|http: serving /www on 0[.]0[.]0[.]0:80, log in /var/log/webrick.log"
            # Nothing may reach rb_bug: CRuby's answer to an impossible libc
            # result is to abort, and it has no way to say so on this machine.
            # ThreadError likewise: threads are real now, and failing to make one

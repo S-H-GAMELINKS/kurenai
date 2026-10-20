@@ -148,9 +148,9 @@ sys_uname(char *buf)
 {
     static const char *const fields[] = {
         "Linux",            /* what the ABI is, and CRuby checks nothing else */
-        "picoruby-kernel",
+        "kurenai",
         "1.0.0",
-        "#1 picoruby-kernel",
+        "#1 kurenai",
         "x86_64",
         "(none)",
     };

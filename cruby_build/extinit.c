@@ -1,4 +1,4 @@
-/* Static extension registration for picoruby-kernel.
+/* Static extension registration for Kurenai.
  *
  * A dynamically linked ruby gets an empty Init_ext from dmydln.c and loads
  * extensions with dlopen. A statically linked one gets a generated

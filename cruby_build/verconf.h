@@ -1,4 +1,4 @@
-/* Hand-written for picoruby-kernel; normally generated from template/verconf.h.in.
+/* Hand-written for Kurenai; normally generated from template/verconf.h.in.
  *
  * Every path is empty on purpose. There is no filesystem layout to install
  * into, and the Ruby files the kernel needs are embedded in the image and

@@ -1,12 +1,12 @@
 diff --git a/compile.c b/compile.c
-index d8f327c..629dee4 100644
+index d8f327c..2722190 100644
 --- a/compile.c
 +++ b/compile.c
 @@ -9118,6 +9118,11 @@ iseq_builtin_function_lookup(const rb_iseq_t *iseq, const char *name)
  {
      int i;
      const struct rb_builtin_function *table = ISEQ_COMPILE_DATA(iseq)->builtin_function_table;
-+    /* picoruby-kernel: the kernel loads precompiled iseqs without a builtin
++    /* kurenai: the kernel loads precompiled iseqs without a builtin
 +     * function table, so looking one up has to fail gracefully. */
 +    if (!table) {
 +        return NULL;
@@ -15,7 +15,7 @@ index d8f327c..629dee4 100644
          if (strcmp(table[i].name, name) == 0) {
              return &table[i];
 diff --git a/thread_pthread.c b/thread_pthread.c
-index d599abc..b1837a4 100644
+index d599abc..ee642ef 100644
 --- a/thread_pthread.c
 +++ b/thread_pthread.c
 @@ -2039,6 +2039,16 @@ static void
@@ -23,7 +23,7 @@ index d599abc..b1837a4 100644
  {
      native_main_thread.id = pthread_self();
 +
-+    /* picoruby-kernel: the main thread's stack comes from the linker script
++    /* kurenai: the main thread's stack comes from the linker script
 +     * and nothing describes it. Asking pthread_getattr_np would probe for its
 +     * end with mremap, which the kernel refuses, forever. Threads created
 +     * later have their stacks described by pthread_create and are left to

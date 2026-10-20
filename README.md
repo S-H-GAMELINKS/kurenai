@@ -1,7 +1,7 @@
-# picoruby-kernel
+# Kurenai (紅)
 
 An x86_64 kernel whose operating-system logic is written in Ruby, running CRuby
-on top of it, running irb.
+on top of it, running irb. The name is 紅, crimson: the colour of a ruby.
 
 ```
 irb(main):001> 1 + 3

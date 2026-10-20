@@ -34,7 +34,7 @@ end
 # by name on every request. Everything here is UTF-8, so say so.
 Encoding.default_external = Encoding::UTF_8
 
-puts "cruby #{RUBY_VERSION} on picoruby-kernel"
+puts "cruby #{RUBY_VERSION} on kurenai"
 puts "1 + 1 = #{1 + 1}"
 
 # Bignum arithmetic, which is CRuby's and not something the mruby VM below it

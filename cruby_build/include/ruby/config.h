@@ -1,7 +1,7 @@
 #ifndef INCLUDE_RUBY_CONFIG_H
 #define INCLUDE_RUBY_CONFIG_H 1
 /* confdefs.h */
-/* Hand-written for picoruby-kernel: freestanding x86_64 against musl.
+/* Hand-written for Kurenai: freestanding x86_64 against musl.
  *
  * Normally configure generates this. Here it cannot: configure decides most
  * of these by compiling and *running* probe programs, which needs a host to
@@ -495,6 +495,6 @@
 #define USE_YJIT 0
 #define USE_ZJIT 0
 /* CHANGED: Platform identifier for Ruby on Bare Metal */
-#define RUBY_PLATFORM "x86_64-ruby-on-bare-metal"
+#define RUBY_PLATFORM "x86_64-kurenai"
 #define RB_DEFAULT_PARSER RB_DEFAULT_PARSER_PRISM
 #endif /* INCLUDE_RUBY_CONFIG_H */
