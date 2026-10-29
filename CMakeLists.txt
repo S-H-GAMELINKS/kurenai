@@ -817,8 +817,11 @@ if(QEMU_EXECUTABLE)
   # A connection made from inside the kernel to a server outside it: CRuby's
   # TCPSocket.new, through connect and the poll for its handshake, to an echo
   # server test/echo_driver.rb runs on this side. One line goes out and comes
-  # back. A port nothing listens on is refused, with the errno saying so,
-  # because that is what SO_ERROR has to carry from lwIP to ext/socket.
+  # back. Then a 20KB line, five times the receive window: its echo arrives as
+  # a burst, which the window has to hold back until the reader makes room --
+  # opening it early overflowed the receive buffer and double-freed a pbuf.
+  # A port nothing listens on is refused, with the errno saying so, because
+  # that is what SO_ERROR has to carry from lwIP to ext/socket.
   #
   # Name resolution is not checked here, because it needs a name server that
   # answers, and that is the network outside this machine.
@@ -832,7 +835,7 @@ if(QEMU_EXECUTABLE)
            -DLOG=${CMAKE_CURRENT_BINARY_DIR}/net_client_session.log
            -DSECONDS=60
            -DUNTIL=irb.finished
-           "-DEXPECT==> .echo: hello[\\]n.|=> Errno::ECONNREFUSED|irb finished"
+           "-DEXPECT==> .echo: hello[\\]n.|=> 20007|=> Errno::ECONNREFUSED|irb finished"
            -P ${CMAKE_CURRENT_LIST_DIR}/cmake/verify/irb_session.cmake)
 
   # termfront, started from irb by its name. It loads -- its network layer

@@ -1,3 +1,4 @@
 s = TCPSocket.new("10.0.2.2", 18500); s.puts("hello"); s.gets
+s.puts("x" * 20_000); s.gets.bytesize
 begin; TCPSocket.new("10.0.2.2", 18501); rescue SystemCallError => e; e.class; end
 exit

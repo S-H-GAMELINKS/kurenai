@@ -61,7 +61,7 @@ index fc1ad11..4ba5f16 100644
  ssize_t TCPSocket_recv(picorb_state *vm, picorb_socket_t *sock, void *buf, size_t len, bool nonblock);
  bool TCPSocket_close(picorb_state *vm, picorb_socket_t *sock);
 diff --git a/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c b/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c
-index 6672002..a2a5b7c 100644
+index 6672002..8ddb900 100644
 --- a/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c
 +++ b/mrbgems/picoruby-socket/ports/rp2040/tcp_server.c
 @@ -15,23 +15,82 @@
@@ -168,6 +168,17 @@ index 6672002..a2a5b7c 100644
      return ERR_MEM;
    }
  
+@@ -91,8 +155,8 @@ tcp_recv_callback(void *arg, struct altcp_pcb *pcb, struct pbuf *pbuf, err_t err
+   sock->recv_len = offset;
+   sock->recv_buf[sock->recv_len] = '\0';
+ 
+-  /* Tell LwIP we processed the data */
+-  altcp_recved(pcb, total_len);
++  /* picoruby-kernel: the window is reopened by TCPSocket_recv as the reader
++   * takes bytes out, not here; see the note in tcp_socket.c. */
+   pbuf_free(pbuf);
+ 
+   D("tcp_server.c tcp_recv_callback: success, total recv_len=%zu\n", sock->recv_len);
 @@ -130,13 +194,19 @@ tcp_accept_callback(void *arg, struct altcp_pcb *newpcb, err_t err)
      return ERR_ABRT;
    }
@@ -364,7 +375,7 @@ index 6672002..a2a5b7c 100644
  
    if (server->listen_pcb) {
 diff --git a/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c b/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c
-index 9844bc6..464bc50 100644
+index 9844bc6..abab20f 100644
 --- a/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c
 +++ b/mrbgems/picoruby-socket/ports/rp2040/tcp_socket.c
 @@ -14,6 +14,11 @@
@@ -387,7 +398,41 @@ index 9844bc6..464bc50 100644
      return err;
    }
  
-@@ -161,6 +167,7 @@ tcp_err_callback(void *arg, err_t err)
+@@ -118,9 +124,16 @@ tcp_recv_callback(void *arg, struct altcp_pcb *pcb, struct pbuf *pbuf, err_t err
+   D("tcp_recv_callback: receiving %zu bytes, current recv_len=%zu", total_len, sock->recv_len);
+ 
+   if (new_size > sock->recv_capacity) {
+-    /* Buffer full - cannot accept more data */
+-    D("tcp_recv_callback: buffer full, dropping data");
+-    pbuf_free(pbuf);
++    /* Buffer full. lwIP's contract for ERR_MEM is that the pbuf has not been
++     * consumed and will be delivered again later, so freeing it here loses the
++     * data and frees a pbuf lwIP is still holding -- which its next attempt
++     * frees again, and the second free trips pbuf_free's p->ref > 0.
++     *
++     * picoruby-kernel: keep the pbuf, as tcp_server.c does. The window is
++     * reopened only as the reader takes bytes out (TCPSocket_recv), so with
++     * TCP_WND no larger than recv_capacity this should not be reached; it is
++     * still not a path whose overflow may be a double free. */
++    D("tcp_recv_callback: buffer full, asking lwIP to keep it");
+     return ERR_MEM;
+   }
+ 
+@@ -135,8 +148,11 @@ tcp_recv_callback(void *arg, struct altcp_pcb *pcb, struct pbuf *pbuf, err_t err
+   sock->recv_len = offset;
+   sock->recv_buf[sock->recv_len] = '\0';
+ 
+-  /* Tell LwIP we processed the data */
+-  altcp_recved(pcb, total_len);
++  /* picoruby-kernel: the window is not reopened here. The bytes are in
++   * recv_buf, not with the reader, and acknowledging them now lets the peer
++   * send another window's worth into a buffer that is still full -- which is
++   * what overflowed it, on the burst of a TLS server's certificate chain.
++   * TCPSocket_recv reopens it as bytes are taken out. */
+   pbuf_free(pbuf);
+ 
+   return ERR_OK;
+@@ -161,6 +177,7 @@ tcp_err_callback(void *arg, err_t err)
  
    sock->state = SOCKET_STATE_ERROR;
    sock->connected = false;
@@ -395,7 +440,7 @@ index 9844bc6..464bc50 100644
    sock->pcb = NULL; /* PCB is already freed by LwIP */
  }
  
-@@ -253,6 +260,45 @@ TCPSocket_connect(picorb_state *vm, picorb_socket_t *sock, const char *host, int
+@@ -253,6 +270,45 @@ TCPSocket_connect(picorb_state *vm, picorb_socket_t *sock, const char *host, int
    }
  }
  
@@ -441,6 +486,22 @@ index 9844bc6..464bc50 100644
  /* Send data */
  ssize_t
  TCPSocket_send(picorb_state *vm, picorb_socket_t *sock, const void *data, size_t len)
+@@ -341,6 +397,15 @@ TCPSocket_recv(picorb_state *vm, picorb_socket_t *sock, void *buf, size_t len, b
+     sock->recv_len = 0;
+   }
+ 
++  /* picoruby-kernel: the room just made is offered back to the peer. This is
++   * the only place the receive window grows, so what lwIP lets in never
++   * exceeds what recv_buf can hold. */
++  if (sock->pcb) {
++    lwip_begin();
++    altcp_recved(sock->pcb, (u16_t)to_copy);
++    lwip_end();
++  }
++
+   return (ssize_t)to_copy;
+ }
+ 
 diff --git a/mrbgems/picoruby-socket/ports/rp2040/udp_socket.c b/mrbgems/picoruby-socket/ports/rp2040/udp_socket.c
 index 180352c..6723e49 100644
 --- a/mrbgems/picoruby-socket/ports/rp2040/udp_socket.c
