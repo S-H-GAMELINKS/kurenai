@@ -66,6 +66,7 @@ IO.popen([options[:qemu],
   woken = options[:wake].nil?
   waiting_for = nil     # a #wait pattern, and where in the transcript it began
   waiting_from = 0
+  sent_at = 0           # how long the transcript was when the last line went
 
   begin
     while Time.now < deadline
@@ -108,10 +109,14 @@ IO.popen([options[:qemu],
       if prompt_seen && waiting_for.nil? && sent < script.length &&
          script[sent].start_with?("#wait ")
         waiting_for = Regexp.new(script[sent].chomp.delete_prefix("#wait "))
-        waiting_from = transcript.length
+        # From the line before, not from now: what is waited for may already
+        # have arrived while the driver paused after sending it, and a screen
+        # drawn by difference is not drawn again.
+        waiting_from = sent_at
         sent += 1
       end
       if prompt_seen && waiting_for.nil? && sent < script.length && (queries == answered)
+        sent_at = transcript.length
         qemu.write(script[sent])
         qemu.flush
         sent += 1
