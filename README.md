@@ -67,8 +67,14 @@ open <http://localhost:3000/> in a browser. To change the page, type `mui` at
 the prompt -- that opens `/www/index.html` in [mui][mui], a Vim-like editor
 written in Ruby -- edit, `:wq`, and reload.
 
+<http://localhost:3000/todo/> is a TODO app with Ruby at every layer: the page
+is written with [Funicular][funicular] and run in the browser by
+[PicoRuby.wasm][picoruby-wasm], and it keeps its todos through a JSON API in
+WEBrick, on CRuby, on this kernel. Its Ruby is `/www/todo/app.rb` -- `mui
+"/www/todo/app.rb"` from irb, save, reload.
+
 ```sh
-ctest --preset dev                        # 22 checks, including live irb and mui sessions
+ctest --preset dev                        # 23 checks, including live irb and mui sessions
 ```
 
 ### What you need
@@ -183,6 +189,7 @@ a SHA cannot.
 | lwIP | 2.2.1, the release picoruby-socket pins |
 | WEBrick | v1.9.2 |
 | mui | `f1168f2`, with its ANSI terminal adapter |
+| PicoRuby.wasm | 4.0.5, from npm, with Funicular |
 
 ## What it does not do
 
@@ -211,3 +218,5 @@ route was mapped by those.
 
 [robm]: https://github.com/S-H-GAMELINKS/ruby-on-bare-metal
 [mui]: https://github.com/S-H-GAMELINKS/mui
+[funicular]: https://github.com/picoruby/funicular
+[picoruby-wasm]: https://www.npmjs.com/package/@picoruby/wasm-wasi

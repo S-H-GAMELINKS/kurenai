@@ -131,6 +131,14 @@ list(APPEND EXT_SOURCES ${WEBRICK_EXT_SOURCES})
 # For mui, which parses key notation with StringScanner.
 list(APPEND EXT_SOURCES ${CRUBY_SRC}/ext/strscan/strscan.c)
 
+# json's parser and generator, two extensions under one gem: json/ext.rb
+# requires json/ext/parser and json/ext/generator by those names. The TODO
+# app's API speaks JSON, and keeps its todos in a JSON file.
+set(JSON_SOURCES
+  ${CRUBY_SRC}/ext/json/parser/parser.c
+  ${CRUBY_SRC}/ext/json/generator/generator.c)
+list(APPEND EXT_SOURCES ${JSON_SOURCES})
+
 add_library(ruby-static STATIC
   ${RUBY_SOURCES}
   ${PRISM_SOURCES}
@@ -157,6 +165,16 @@ set_source_files_properties(${CRUBY_SRC}/ext/stringio/stringio.c PROPERTIES
   COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/stringio_extconf.h")
 set_source_files_properties(${CRUBY_SRC}/ext/io/nonblock/nonblock.c PROPERTIES
   COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/io_nonblock_extconf.h")
+# json writes no extconf.h; its extconf.rb puts what have_func found straight
+# into $defs, so these are -D flags rather than an -include. Each function is
+# present in CRuby 4.0. JSON_ENABLE_SIMD is left undefined, which is the
+# portable path: simd/conf.rb defines it only after compiling a test program
+# against the host's x86intrin.h, and there is no such test to run here.
+set_source_files_properties(${JSON_SOURCES} PROPERTIES
+  COMPILE_DEFINITIONS "HAVE_RB_ENC_INTERNED_STR=1;HAVE_RB_STR_TO_INTERNED_STR=1;HAVE_RB_HASH_NEW_CAPA=1;HAVE_RB_HASH_BULK_INSERT=1")
+set_property(SOURCE ${CRUBY_SRC}/ext/json/generator/generator.c APPEND PROPERTY
+  COMPILE_DEFINITIONS JSON_GENERATOR)
+
 set_source_files_properties(${CRUBY_SRC}/ext/strscan/strscan.c PROPERTIES
   COMPILE_DEFINITIONS "RUBY_EXTCONF_H=\"strscan_extconf.h\""
   INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}")

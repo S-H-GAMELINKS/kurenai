@@ -37,6 +37,14 @@ set(WEBRICK_REF  b1684cecf9eb87cb2ae20fd52fbb80cf3e859c8a)  # v1.9.2
 set(MUI_URL      https://github.com/S-H-GAMELINKS/mui.git)
 set(MUI_REF      f1168f2d0c49a7a7430ce0e5221a0cb41aba7dc8)  # master
 
+# Set PicoRuby.wasm version
+# The browser's Ruby: PicoRuby compiled to WebAssembly, with Funicular built
+# in, as published on npm. It is served to the browser from /www/picoruby, and
+# never runs on this machine. Pinned by the tarball's own sha512, which is the
+# integrity npm records for it -- the npm equivalent of a commit SHA.
+set(PICORUBY_WASM_URL    https://registry.npmjs.org/@picoruby/wasm-wasi/-/wasm-wasi-4.0.5.tgz)
+set(PICORUBY_WASM_SHA512 0fcb31151e5db06f4f0da24885613104205443a7da8d5208153d062c8c9f905ac24dc97c4244d0d5bcbe97fd8190869b70f06e0b0e99faa1686b90c60571856e)  # 4.0.5
+
 # Set PicoRuby version
 # There is no tag at this commit, which is why the SHA appears bare here.
 set(PICORUBY_URL https://github.com/picoruby/picoruby.git)

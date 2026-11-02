@@ -398,6 +398,23 @@ ExternalProject_Add(mui
   STEP_TARGETS download
 )
 
+# ---------------------------------------------------------------- PicoRuby.wasm
+# Download and unpack only: three files from the npm package's dist/, served
+# to the browser by WEBrick. ExternalProject checks the sha512 before it
+# unpacks anything, and strips the tarball's single top-level directory.
+ExternalProject_Add(picoruby_wasm
+  SOURCE_DIR ${TP}/picoruby-wasm
+  URL ${PICORUBY_WASM_URL}
+  URL_HASH SHA512=${PICORUBY_WASM_SHA512}
+  DOWNLOAD_NO_PROGRESS ON
+
+  UPDATE_COMMAND    ""
+  PATCH_COMMAND     ""
+  CONFIGURE_COMMAND ""
+  BUILD_COMMAND     ""
+  INSTALL_COMMAND   ""
+)
+
 # ---------------------------------------------------------------- kernel
 set(KERNEL_DIR   ${CMAKE_BINARY_DIR}/kernel)
 set(KERNEL_ELF   ${KERNEL_DIR}/kernel.elf)
@@ -406,7 +423,7 @@ set(KERNEL64_ELF ${KERNEL_DIR}/kernel64.elf)
 ExternalProject_Add(kernel
   SOURCE_DIR ${CMAKE_SOURCE_DIR}/kernel
   BINARY_DIR ${KERNEL_DIR}
-  DEPENDS musl picoruby cruby_cross gems lwip webrick mui
+  DEPENDS musl picoruby cruby_cross gems lwip webrick mui picoruby_wasm
 
   DOWNLOAD_COMMAND ""
   UPDATE_COMMAND   ""
@@ -435,6 +452,7 @@ ExternalProject_Add(kernel
     -DGEMS_DIR=${GEMS_DIR}
     -DWEBRICK_SRC=${TP}/webrick
     -DMUI_SRC=${TP}/mui
+    -DPICORUBY_WASM_DIR=${TP}/picoruby-wasm
     -DCMAKE_BUILD_TYPE=Release
 
   BUILD_BYPRODUCTS ${KERNEL_ELF} ${KERNEL64_ELF}
@@ -739,6 +757,20 @@ if(QEMU_EXECUTABLE)
            # requests would time out behind it.
            --idle 2
            --seconds 45)
+
+  # The TODO app, from outside the machine. Its page runs in a browser --
+  # Ruby again, on PicoRuby.wasm with Funicular -- which a test has no browser
+  # for, so this checks what the page stands on: the page, its Ruby and
+  # PicoRuby.wasm served, the last byte for byte and as application/wasm, and
+  # the JSON API in WEBrick adding, completing and removing todos.
+  add_test(NAME verify_todo COMMAND ${RUBY_EXECUTABLE}
+           ${CMAKE_SOURCE_DIR}/test/todo_driver.rb
+           --qemu ${QEMU_EXECUTABLE}
+           --kernel ${KERNEL_ELF}
+           --log ${CMAKE_CURRENT_BINARY_DIR}/todo_session.log
+           --port 18081
+           --wasm ${TP}/picoruby-wasm/dist/picoruby.wasm
+           --seconds 60)
 
   # Drives irb through a stand-in terminal, exercising the three things that
   # separate this from the dumb terminal irb started out on. The session types

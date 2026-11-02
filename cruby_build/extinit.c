@@ -27,7 +27,10 @@
  * defines Digest(), and md5init.c requires "digest" to get it.
  *
  * strscan exists for mui, the editor, and its Ruby half -- strscan/strscan.rb,
- * which Init_strscan requires -- is embedded alongside. */
+ * which Init_strscan requires -- is embedded alongside.
+ *
+ * json is two extensions, json/ext/parser and json/ext/generator, required by
+ * those names from json/ext.rb. The TODO app's API is what uses it. */
 
 void ruby_init_ext(const char *name, void (*init)(void));
 
@@ -43,6 +46,8 @@ void Init_md5(void);
 void Init_sha1(void);
 void Init_etc(void);
 void Init_strscan(void);
+void Init_parser(void);
+void Init_generator(void);
 
 void
 Init_ext(void)
@@ -59,4 +64,6 @@ Init_ext(void)
     ruby_init_ext("digest/sha1.so", Init_sha1);
     ruby_init_ext("etc.so", Init_etc);
     ruby_init_ext("strscan.so", Init_strscan);
+    ruby_init_ext("json/ext/parser.so", Init_parser);
+    ruby_init_ext("json/ext/generator.so", Init_generator);
 }

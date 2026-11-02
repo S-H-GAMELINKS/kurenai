@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kurenai TODO</title>
+<style>
+  :root { --red: #b7282e; --ink: #222; --muted: #777; --line: #e3e3e3; }
+  body { font-family: system-ui, sans-serif; color: var(--ink); background: #fafafa;
+         max-width: 36rem; margin: 3rem auto; padding: 0 1rem; }
+  h1 { color: var(--red); font-weight: 600; margin-bottom: 0.2rem; }
+  .lede { color: var(--muted); margin-top: 0; }
+  form { display: flex; gap: 0.5rem; margin: 1.5rem 0 1rem; }
+  input[type=text] { flex: 1; padding: 0.55rem 0.7rem; font-size: 1rem;
+                     border: 1px solid #ccc; border-radius: 6px; }
+  button { padding: 0.5rem 0.9rem; font-size: 1rem; border-radius: 6px;
+           border: 1px solid var(--red); background: var(--red); color: #fff; cursor: pointer; }
+  ul { list-style: none; padding: 0; margin: 0; background: #fff;
+       border: 1px solid var(--line); border-radius: 8px; }
+  li { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.8rem;
+       border-bottom: 1px solid var(--line); }
+  li:last-child { border-bottom: none; }
+  li .title { flex: 1; }
+  li.done .title { text-decoration: line-through; color: var(--muted); }
+  li button { background: none; color: var(--muted); border: none; font-size: 1.1rem; padding: 0 0.3rem; }
+  .empty { padding: 1rem; color: var(--muted); text-align: center; }
+  .status { color: var(--muted); font-size: 0.9rem; margin-top: 0.8rem; }
+  .error { color: var(--red); }
+  footer { margin-top: 2rem; color: var(--muted); font-size: 0.85rem; line-height: 1.6; }
+  code { font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<h1>TODO</h1>
+<p class="lede">Ruby from the kernel up to this page.</p>
+<p class="status" id="booting">Starting PicoRuby.wasm…</p>
+<div id="app"></div>
+<script type="text/ruby" src="app.rb"></script>
+<script src="/picoruby/init.iife.js"></script>
+</body>
+</html>

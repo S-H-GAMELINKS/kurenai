@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 3.25)
 project(kurenai LANGUAGES C ASM)
 
 foreach(v BOOT_DIR RUBY_DIR PICORBC PICORUBY_LIB PICORUBY_INCLUDE_DIRS MUSL_INSTALL
-          CRUBY_LIB CRUBY_SRC PICORUBY_SRC LWIP_SRC GEMS_DIR WEBRICK_SRC MUI_SRC EMBED_SCRIPT EMBED_FILES)
+          CRUBY_LIB CRUBY_SRC PICORUBY_SRC LWIP_SRC GEMS_DIR WEBRICK_SRC MUI_SRC PICORUBY_WASM_DIR EMBED_SCRIPT EMBED_FILES)
   if(NOT ${v})
     message(FATAL_ERROR "kernel: -D${v}=... is required")
   endif()
@@ -90,6 +90,16 @@ endfunction()
 
 embed_under(${RUBY_DIR}/files hello.rb rbconfig.rb www/index.html)
 
+# The TODO app: its API, Ruby in WEBrick, and its page, Ruby in the browser.
+embed_under(${RUBY_DIR}/files todo_api.rb www/todo/index.html www/todo/app.rb)
+
+# PicoRuby.wasm, which runs that page's Ruby in the browser, served from
+# /www/picoruby. The loader finds picoruby.js and the .wasm next to itself.
+foreach(file init.iife.js picoruby.js picoruby.wasm)
+  list(APPEND EMBEDDED_ENTRIES "/www/picoruby/${file}=${PICORUBY_WASM_DIR}/dist/${file}")
+  list(APPEND EMBEDDED_SOURCES "${PICORUBY_WASM_DIR}/dist/${file}")
+endforeach()
+
 # Ripper's Ruby half. The C half is already linked in and registered as
 # ripper.so, which is what ripper/core.rb requires.
 embed_under(${CRUBY_SRC}/ext/ripper/lib
@@ -155,6 +165,10 @@ embed_all_ruby_under(${MUI_SRC}/lib)
 embed_all_ruby_under(${CRUBY_SRC}/ext/date/lib)
 embed_all_ruby_under(${CRUBY_SRC}/ext/digest/lib)
 embed_all_ruby_under(${CRUBY_SRC}/ext/strscan/lib)
+
+# json's Ruby half: json.rb, json/common.rb and json/ext.rb, which requires the
+# two C halves by name.
+embed_all_ruby_under(${CRUBY_SRC}/ext/json/lib)
 
 embed_ruby_under(${CRUBY_SRC}/lib EXCLUDE
   "^bundler"      # a package manager, with no packages and no network

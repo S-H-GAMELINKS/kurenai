@@ -188,6 +188,11 @@ begin
     AccessLog: [[log, WEBrick::AccessLog::COMMON_LOG_FORMAT]]
   )
 
+  # The TODO app at /todo/: its page is Ruby too, run in the browser by
+  # PicoRuby.wasm, and it keeps its todos here through a JSON API in Ruby.
+  require "todo_api"
+  TodoAPI.mount(server, "/var/todos.json")
+
   # Printed from inside start, as the select is about to run -- the tests knock
   # as soon as they see this line -- and waited for here, so the line comes
   # before irb's rather than somewhere in the middle of it.
